@@ -1,0 +1,181 @@
+# python drowniness_yawn.py --webcam webcam_index
+
+from scipy.spatial import distance as dist
+from imutils.video import VideoStream
+from imutils import face_utils
+from threading import Thread
+import numpy as np
+import argparse
+import imutils
+import time
+import dlib
+import cv2
+import os
+import subprocess # no need for this since espeak works already
+
+
+def alarm(msg):
+    global alarm_status
+    global alarm_status2
+    global saying
+
+    while alarm_status:
+        print('call')
+        s = 'espeak "' + msg + '"'
+        os.system(s)
+        saying = False
+
+    if alarm_status2:
+        print('call')
+        saying = True
+        s = 'espeak "' + msg + '"'
+        os.system(s)
+        saying = False
+
+
+def eye_aspect_ratio(eye): #EAR FOR THE FINAL EAR SHAPE
+    A = dist.euclidean(eye[1], eye[5]) #This is based on the formula
+    B = dist.euclidean(eye[2], eye[4])
+
+    C = dist.euclidean(eye[0], eye[3])
+
+    ear = (A + B) / (2.0 * C) #finding for the ear
+
+    return ear
+
+#final_EAR notes #python starts at number 0 sso we have to subtract 1 from it
+#---Left eye starts at 37 and it ends at 42
+#---right eye starts at 43 and it ends at 48
+
+def final_ear(shape): #starting and ending index of each of the eye
+    (lStart, lEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"] #left start left end
+    (rStart, rEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"] #right start, right end
+
+    leftEye = shape[lStart:lEnd] #getting all the positions left eye
+    rightEye = shape[rStart:rEnd] #getting all the positions right eye
+
+    leftEAR = eye_aspect_ratio(leftEye) #using formula
+    rightEAR = eye_aspect_ratio(rightEye) #using formula
+
+    ear = (leftEAR + rightEAR) / 2.0 #finding for the average of the 2 ear
+    return (ear, leftEye, rightEye)
+
+
+def lip_distance(shape): # for the mouth
+    top_lip = shape[50:53] #find positions for top lip
+    top_lip = np.concatenate((top_lip, shape[61:64]))
+
+    low_lip = shape[56:59] #find positions of low lip
+    low_lip = np.concatenate((low_lip, shape[65:68]))
+
+    top_mean = np.mean(top_lip, axis=0)
+    low_mean = np.mean(low_lip, axis=0)
+
+    distance = abs(top_mean[1] - low_mean[1])
+    return distance
+
+
+ap = argparse.ArgumentParser() #take the argument for webcam only
+ap.add_argument("-w", "--webcam", type=int, default=0, #-w is webcam
+                help="index of webcam on system")
+args = vars(ap.parse_args())
+
+#declared facial values constant
+EYE_AR_THRESH = 0.3 #EAR threshold 0.25-0.3  #less than 0.1 is sleeping already
+EYE_AR_CONSEC_FRAMES = 45 #How many frames u want to check the eye is closed #takes how many seconds (30 frames to alert sleep)
+YAWN_THRESH = 30  #Distance between those 2 lips threshold #more than 20 is yawning already!
+alarm_status = False #alarm 1 for eye threshold
+alarm_status2 = False #alarm2 for yawn threshold
+saying = False
+COUNTER = 0
+
+print("Loading the predictor and detector...")
+#detector = dlib.get_frontal_face_detector() #detect face from frame (ONLY) #DLIB IF U WANT THIS
+detector = cv2.CascadeClassifier(r"C:\Users\Abbwie\PycharmProjects\drowsiness detection\models\haarcascade_frontalface_default.xml")
+predictor = dlib.shape_predictor(r"C:\Users\Abbwie\PycharmProjects\drowsiness detection\models\shape_predictor_68_face_landmarks.dat")
+
+print("Starting Video Stream")
+vs = VideoStream(src=args["webcam"]).start() #argument 0
+# vs= VideoStream(usePiCamera=True).start()       //For Raspberry Pi only
+time.sleep(1.0)
+
+while True: #loop it out!
+
+    frame = vs.read() #reading frames from camera
+    frame = imutils.resize(frame, width=450) #resizing frame
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) #grayscale image
+
+    # rects = detector(gray, 0) #if u are using dlib
+    rects = detector.detectMultiScale(gray, scaleFactor=1.1, #if ur using cv2 only
+                                      minNeighbors=5, minSize=(30, 30),
+                                      flags=cv2.CASCADE_SCALE_IMAGE) #single face or number of face
+
+    # for rect in rects: #for dlib
+    for (x, y, w, h) in rects: #for cv2 detector #comment these 2 lines if ur using dlib
+        rect = dlib.rectangle(int(x), int(y), int(x + w), int(y + h)) #process each and every face
+
+        shape = predictor(gray, rect)
+        shape = face_utils.shape_to_np(shape) # converting shape to numpy to be easier #numerical array
+
+        eye = final_ear(shape) #final ear
+        ear = eye[0]
+        leftEye = eye[1]
+        rightEye = eye[2]
+
+        distance = lip_distance(shape)
+        #-----
+        leftEyeHull = cv2.convexHull(leftEye)
+        rightEyeHull = cv2.convexHull(rightEye)
+        cv2.drawContours(frame, [leftEyeHull], -1, (0, 255, 0), 1)
+        cv2.drawContours(frame, [rightEyeHull], -1, (0, 255, 0), 1)
+
+        lip = shape[48:60]
+        cv2.drawContours(frame, [lip], -1, (0, 255, 0), 1)
+        #if the caught eye aspect ratio is lesser than the threshold value
+        if ear < EYE_AR_THRESH:
+            COUNTER += 1
+
+            if COUNTER >= EYE_AR_CONSEC_FRAMES: #if counter is greater than the consecutive frame
+                if alarm_status == False: #play the alarm
+                    alarm_status = True
+                    t = Thread(target=alarm, args=('wake up and eyes on the road',)) #threading so that it wont lag
+                    t.deamon = True
+                    t.start()
+
+                cv2.putText(frame, "DROWSINESS ALERT!", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        else: #if not less than the threshold value -- counter will be 0
+            COUNTER = 0
+            alarm_status = False
+
+        if (distance > YAWN_THRESH): #if distance is greater than the threshold
+            cv2.putText(frame, "Yawn Alert", (10, 30), #print and alarm
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            if alarm_status2 == False and saying == False:
+                alarm_status2 = True
+                t = Thread(target=alarm, args=('take some fresh air',)) #threading so it wont lag
+                t.deamon = True
+                t.start()
+        else:
+            alarm_status2 = False
+        #Writing Ar to know
+        cv2.putText(frame, "EAR: {:.2f}".format(ear), (300, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, "YAWN: {:.2f}".format(distance), (300, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    #added image for safe driving and caution
+    attention_image = cv2.imread(r"C:\Users\Abbwie\PycharmProjects\drowsiness detection\models\sample_logo.png")  # Load image
+    attention_image = cv2.resize(attention_image, (100, 100))  # Resize to fit
+    h, w, _ = attention_image.shape
+    frame[10:10 + h, 10:10 + w] = attention_image
+
+    cv2.imshow("Drowsiness Detector", frame)
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord("q"): #stop whole process if clicked q
+        break
+
+cv2.destroyAllWindows()
+vs.stop()
