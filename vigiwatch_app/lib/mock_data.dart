@@ -46,3 +46,9 @@ List<int> get weekCounts => List.generate(7, (i) {
       final day = _now.subtract(Duration(days: 6 - i));
       return events.where((e) => _sameDay(e.time, day)).length;
     });
+
+// Settings the user can change in the app.
+String emergencyName = 'Mama';
+String emergencyNumber = '+63 967 009 2434';
+bool voiceAlertOn = true;
+bool buzzerOn = false;

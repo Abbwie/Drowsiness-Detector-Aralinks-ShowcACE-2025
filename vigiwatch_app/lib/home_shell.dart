@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'history_page.dart';
 import 'home_page.dart';
 import 'login_page.dart';
+import 'settings_page.dart';
 import 'theme.dart';
 
 class HomeShell extends StatefulWidget {
@@ -26,18 +27,13 @@ class _HomeShellState extends State<HomeShell> {
       appBar: AppBar(
         backgroundColor: bg,
         title: const Text('VigiWatch'),
-        actions: [
-          IconButton(
-            onPressed: logout,
-            icon: const Icon(Icons.logout, size: 20),
-          ),
-        ],
       ),
       body: IndexedStack(
         index: index,
         children: [
           HomePage(onSeeAll: () => setState(() => index = 1)),
           const HistoryPage(),
+          SettingsPage(onLogout: logout),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -49,6 +45,8 @@ class _HomeShellState extends State<HomeShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.list), label: 'History'),
+          NavigationDestination(
+              icon: Icon(Icons.settings_outlined), label: 'Settings'),
         ],
       ),
     );
