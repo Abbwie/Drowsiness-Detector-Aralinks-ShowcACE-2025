@@ -503,10 +503,10 @@ def main():
             if state in ("DROWSY", "MICROSLEEP") and now - last_drowsy_alert >= DROWSY_COOLDOWN:
                 last_drowsy_alert = now
                 sleepy_sets += 1
-                Thread(target=speak, args=("Wake up! Keep your eyes on the road!",),
+                Thread(target=speak, args=("Wake up! Keep your eyes open!",),
                        daemon=True).start()
                 if sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0:
-                    send_whatsapp(WHATSAPP_NUMBER, "Driver appears drowsy! Please check.")
+                    send_whatsapp(WHATSAPP_NUMBER, "User appears drowsy! Please check.")
 
             # ---------- yawn ----------
             if mouth_opening > YAWN_THRESH and now - last_yawn_alert >= YAWN_COOLDOWN:
