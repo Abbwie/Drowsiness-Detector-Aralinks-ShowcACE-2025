@@ -12,7 +12,7 @@ class VigiWatchApp extends StatelessWidget {
     return MaterialApp(
       title: 'VigiWatch',
       debugShowCheckedModeBanner: false,
-      theme: vigiWatchTheme(),
+      theme: appTheme(),
       home: const LoginPage(),
     );
   }
