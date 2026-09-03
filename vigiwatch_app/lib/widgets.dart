@@ -3,6 +3,12 @@ import 'mock_data.dart';
 import 'theme.dart';
 
 const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _months = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+String formatDate(DateTime t) => '${_months[t.month - 1]} ${t.day}';
 
 String formatTime(DateTime t) {
   final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
