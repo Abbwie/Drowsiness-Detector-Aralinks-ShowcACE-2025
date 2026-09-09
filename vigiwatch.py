@@ -43,6 +43,11 @@ try:
 except ImportError:
     pywhatkit = None
 
+try:
+    import requests
+except ImportError:
+    requests = None
+
 
 
 # Camera / processing
@@ -83,6 +88,15 @@ DROWSY_COOLDOWN = 5
 
 WHATSAPP_NUMBER = "+639670092434"
 WHATSAPP_EVERY_N_ALERTS = 5
+
+# Cloud relay -- the FastAPI service on Railway that the phone app reads from.
+# Both come from the environment so the key never lands in git. Leave them unset
+# and the detector behaves exactly as before, just reporting nowhere.
+#   set VIGIWATCH_API_URL=https://your-app.up.railway.app
+#   set VIGIWATCH_API_KEY=...
+API_URL = os.environ.get("VIGIWATCH_API_URL", "").rstrip("/")
+API_KEY = os.environ.get("VIGIWATCH_API_KEY", "")
+STATUS_EVERY = 1.0        # seconds between heartbeats to the relay
 
 
 # ------------------------------------------------------------ file paths ----
@@ -365,6 +379,36 @@ def send_whatsapp(phone_number, message):
     Thread(target=send, daemon=True).start()
 
 
+def _post(path, payload):
+    """Fire-and-forget POST to the relay.
+
+    Runs on its own thread and swallows every error: the frame loop must not
+    stall on a slow request, and wifi dropping out must not take the detector
+    down mid-drive.
+    """
+    if not API_URL or requests is None:
+        return
+
+    def send():
+        try:
+            requests.post(API_URL + path, json=payload,
+                          headers={"X-API-Key": API_KEY}, timeout=4)
+        except Exception as exc:
+            print("Relay unreachable: {}".format(exc))
+
+    Thread(target=send, daemon=True).start()
+
+
+def report_event(kind, seconds):
+    """One episode, for the app's history page."""
+    _post("/events", {"kind": kind, "seconds": round(max(seconds, 0.0), 2)})
+
+
+def report_status(state, score):
+    """Heartbeat, so the app can show the live state."""
+    _post("/status", {"state": state, "perclos": round(score, 4)})
+
+
 # ----------------------------------------------------------------- main -----
 def main():
     ap = argparse.ArgumentParser(description="VigiWatch drowsiness detector (PERCLOS)")
@@ -404,6 +448,7 @@ def main():
     last_drowsy_alert = 0.0
     last_yawn_alert = 0.0
     last_no_face_alert = 0.0
+    last_status_post = 0.0
     no_face_start = None
     fps = 0.0
     last_frame_time = time.time()
@@ -509,11 +554,22 @@ def main():
                 if sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0:
                     send_whatsapp(WHATSAPP_NUMBER, "User appears drowsy! Please check.")
 
+                # A microsleep has a literal duration. A PERCLOS alert does not,
+                # so report the time the eyes spent shut inside the window --
+                # which is what the score actually measures.
+                report_event(state, eyes_shut_for if state == "MICROSLEEP"
+                             else score * PERCLOS_WINDOW)
+
             # ---------- yawn ----------
             if mouth_opening > YAWN_THRESH and now - last_yawn_alert >= YAWN_COOLDOWN:
                 last_yawn_alert = now
                 Thread(target=speak, args=("Stop yawning! Stay focused!",),
                        daemon=True).start()
+                report_event("YAWN", 0.0)
+
+            if now - last_status_post >= STATUS_EVERY:
+                last_status_post = now
+                report_status(state, score)
 
             # ---------- draw ----------
             display, disp_scale, off_x, off_y = fit_letterbox(frame)
