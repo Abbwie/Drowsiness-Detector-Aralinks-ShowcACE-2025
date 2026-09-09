@@ -48,6 +48,13 @@ try:
 except ImportError:
     requests = None
 
+try:
+    from dotenv import load_dotenv
+    # Explicit path, so it works no matter which directory you run from.
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 
 
 # Camera / processing
@@ -90,12 +97,19 @@ WHATSAPP_NUMBER = "+639670092434"
 WHATSAPP_EVERY_N_ALERTS = 5
 
 # Cloud relay -- the FastAPI service on Railway that the phone app reads from.
-# Both come from the environment so the key never lands in git. Leave them unset
-# and the detector behaves exactly as before, just reporting nowhere.
-#   set VIGIWATCH_API_URL=https://your-app.up.railway.app
-#   set VIGIWATCH_API_KEY=...
-API_URL = os.environ.get("VIGIWATCH_API_URL", "").rstrip("/")
-API_KEY = os.environ.get("VIGIWATCH_API_KEY", "")
+# Set both in .env at the repo root (gitignored, so the key never lands in git).
+# Leave them unset and the detector runs exactly as before, reporting nowhere.
+#   API_URL=https://your-app.up.railway.app
+#   API_KEY=...
+API_URL = os.environ.get("API_URL", "").strip().rstrip("/")
+API_KEY = os.environ.get("API_KEY", "").strip()
+
+# Railway displays the domain with no scheme and it is easy to paste it that
+# way. requests rejects that, so fill in the https:// instead of failing with
+# an obscure "No connection adapters were found".
+if API_URL and not API_URL.startswith(("http://", "https://")):
+    API_URL = "https://" + API_URL
+
 STATUS_EVERY = 1.0        # seconds between heartbeats to the relay
 
 
