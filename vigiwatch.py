@@ -44,7 +44,7 @@ except ImportError:
     pywhatkit = None
 
 
-# ---------------------------------------------------------------- tuning ----
+
 # Camera / processing
 PROC_WIDTH = 640          # width we run detection at. Bigger = better landmark
                           # precision (so a cleaner EAR signal), but slower.
@@ -56,6 +56,7 @@ PROC_WIDTH = 640          # width we run detection at. Bigger = better landmark
 PERCLOS_WINDOW = 30.0     # seconds of history the score is measured over.
                           # Research standard is 60 s; 30 s reacts faster, which
                           # is better for a live demo.
+                          
 PERCLOS_CLOSED_LEVEL = 0.20   # P80: eye counts as "closed" at <= 20% open.
 PERCLOS_WARN = 0.08       # 8% of the window closed -> early fatigue warning
 PERCLOS_ALERT = 0.15      # 15% -> drowsy, sound the alarm
