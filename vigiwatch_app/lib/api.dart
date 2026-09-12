@@ -5,6 +5,18 @@ import 'package:http/http.dart' as http;
 
 import 'config.dart';
 
+/// Read a timestamp from the relay as an instant in UTC.
+///
+/// The relay stamps UTC on everything it sends, but a naive value can still
+/// arrive from an older deploy or one running on SQLite instead of Postgres.
+/// DateTime.parse would read that as the phone's own local time, putting every
+/// episode eight hours out in Manila, so assume UTC when no zone is given.
+DateTime parseInstant(String raw) {
+  final hasZone = raw.endsWith('Z') ||
+      RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(raw);
+  return DateTime.parse(hasZone ? raw : '${raw}Z').toLocal();
+}
+
 /// One episode the detector reported.
 class DrowsyEvent {
   final int id;
@@ -21,9 +33,7 @@ class DrowsyEvent {
 
   factory DrowsyEvent.fromJson(Map<String, dynamic> json) => DrowsyEvent(
         id: json['id'] as int,
-        // The relay stamps UTC on every timestamp, so parse gives a UTC value
-        // and toLocal() puts it back in the driver's own hours.
-        time: DateTime.parse(json['occurred_at'] as String).toLocal(),
+        time: parseInstant(json['occurred_at'] as String),
         seconds: (json['seconds'] as num).toDouble(),
         kind: json['kind'] as String? ?? 'DROWSY',
       );
@@ -54,7 +64,7 @@ class LiveStatus {
   factory LiveStatus.fromJson(Map<String, dynamic> json) => LiveStatus(
         state: json['state'] as String? ?? 'OFFLINE',
         perclos: (json['perclos'] as num?)?.toDouble() ?? 0,
-        updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
+        updatedAt: parseInstant(json['updated_at'] as String),
         online: json['online'] as bool? ?? false,
       );
 }
@@ -74,9 +84,21 @@ class VigiWatchApi {
   final http.Client _client;
 
   VigiWatchApi({String? baseUrl, String? key, http.Client? client})
-      : baseUrl = (baseUrl ?? apiUrl).replaceAll(RegExp(r'/+$'), ''),
+      : baseUrl = _normalise(baseUrl ?? apiUrl),
         key = key ?? apiKey,
         _client = client ?? http.Client();
+
+  /// Railway shows the host without a scheme and that is what gets pasted, so
+  /// fill in https:// rather than failing on a relative URI. The detector does
+  /// the same with its own copy of the address.
+  static String _normalise(String url) {
+    var u = url.trim().replaceAll(RegExp(r'/+$'), '');
+    if (u.isEmpty) return u;
+    if (!u.startsWith('http://') && !u.startsWith('https://')) {
+      u = 'https://$u';
+    }
+    return u;
+  }
 
   Map<String, String> get _headers => {
         'X-API-Key': key,

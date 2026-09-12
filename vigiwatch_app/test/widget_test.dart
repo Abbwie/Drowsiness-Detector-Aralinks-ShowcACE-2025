@@ -178,6 +178,17 @@ void main() {
     await tearDownTree(tester);
   });
 
+  test('a bare host gets https:// filled in', () {
+    // Railway shows the address without a scheme, and that is what gets pasted
+    // into --dart-define.
+    expect(VigiWatchApi(baseUrl: 'app.up.railway.app', key: 'k').baseUrl,
+        'https://app.up.railway.app');
+    expect(VigiWatchApi(baseUrl: 'https://app.up.railway.app/', key: 'k').baseUrl,
+        'https://app.up.railway.app');
+    expect(VigiWatchApi(baseUrl: 'http://127.0.0.1:8077', key: 'k').baseUrl,
+        'http://127.0.0.1:8077');
+  });
+
   test('a UTC timestamp becomes local time', () {
     final e = DrowsyEvent.fromJson({
       'id': 1,
@@ -189,5 +200,18 @@ void main() {
     // Whatever zone the test machine is in, the instant must survive the trip.
     expect(e.time.isUtc, isFalse);
     expect(e.time.toUtc(), DateTime.utc(2026, 9, 12, 1, 30));
+  });
+
+  test('a timestamp with no zone is read as UTC, not as local time', () {
+    // What an older deploy, or one on SQLite rather than Postgres, sends.
+    // Trusting the phone's zone here would put every episode hours out.
+    expect(parseInstant('2026-09-12T01:30:00.123456').toUtc(),
+        DateTime.utc(2026, 9, 12, 1, 30, 0, 123, 456));
+
+    // An explicit offset is still honoured rather than overwritten.
+    expect(parseInstant('2026-09-12T09:30:00+08:00').toUtc(),
+        DateTime.utc(2026, 9, 12, 1, 30));
+    expect(parseInstant('2026-09-12T01:30:00Z').toUtc(),
+        DateTime.utc(2026, 9, 12, 1, 30));
   });
 }
