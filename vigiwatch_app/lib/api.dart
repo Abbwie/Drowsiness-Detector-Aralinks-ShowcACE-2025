@@ -152,7 +152,15 @@ class VigiWatchApi {
       throw ApiException('Cannot reach the relay. Check your connection.');
     }
 
-    if (res.statusCode == 401) throw ApiException(onUnauthorized);
+    // A rejected API key and a rejected password are both 401, and reporting
+    // the key problem as "wrong password" sends you hunting for the wrong
+    // thing. The relay names which one it was, so pass that on.
+    if (res.statusCode == 401) {
+      throw ApiException(_detail(res.body).toLowerCase().contains('api key')
+          ? 'The relay rejected this app\'s API key. Check the '
+              'API_KEY it was built with.'
+          : onUnauthorized);
+    }
     if (res.statusCode >= 400) {
       throw ApiException('The relay returned an error (${res.statusCode}).');
     }
@@ -162,6 +170,20 @@ class VigiWatchApi {
     } catch (_) {
       throw ApiException('The relay sent something the app could not read.');
     }
+  }
+
+  /// FastAPI puts the reason in `detail`. Returns '' if the body is not that
+  /// shape, which is fine -- the caller falls back to its own wording.
+  static String _detail(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['detail'] is String) {
+        return decoded['detail'] as String;
+      }
+    } catch (_) {
+      // Not JSON. Nothing to learn from it.
+    }
+    return '';
   }
 
   void close() => _client.close();

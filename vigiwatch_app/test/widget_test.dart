@@ -178,6 +178,45 @@ void main() {
     await tearDownTree(tester);
   });
 
+  group('a 401 says which credential was rejected', () {
+    VigiWatchApi apiRejecting(String detail) => VigiWatchApi(
+          baseUrl: 'https://relay.test',
+          key: 'k',
+          client: MockClient(
+              (_) async => http.Response(jsonEncode({'detail': detail}), 401)),
+        );
+
+    test('a bad API key is not reported as a bad password', () async {
+      // The whole point: a mistyped --dart-define sends you hunting for the
+      // wrong problem if this reads "wrong username or password".
+      await expectLater(
+        apiRejecting('Bad API key').login('abigail', 'right-password'),
+        throwsA(isA<ApiException>()
+            .having((e) => e.message, 'message', contains('API key'))),
+      );
+    });
+
+    test('a bad password still reads as a bad password', () async {
+      await expectLater(
+        apiRejecting('Wrong username or password').login('abigail', 'nope'),
+        throwsA(isA<ApiException>().having(
+            (e) => e.message, 'message', 'Wrong username or password.')),
+      );
+    });
+
+    test('an unparseable body falls back to the caller wording', () async {
+      await expectLater(
+        VigiWatchApi(
+          baseUrl: 'https://relay.test',
+          key: 'k',
+          client: MockClient((_) async => http.Response('<html>502</html>', 401)),
+        ).login('abigail', 'nope'),
+        throwsA(isA<ApiException>().having(
+            (e) => e.message, 'message', 'Wrong username or password.')),
+      );
+    });
+  });
+
   test('a bare host gets https:// filled in', () {
     // Railway shows the address without a scheme, and that is what gets pasted
     // into --dart-define.
