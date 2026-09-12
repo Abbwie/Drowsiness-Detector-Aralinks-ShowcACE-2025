@@ -1,11 +1,12 @@
-from datetime import timedelta, timezone
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Status, utcnow
-from schemas import StatusIn, StatusOut
+from schemas import StatusIn, StatusOut, as_utc
 from security import require_key
 
 router = APIRouter(prefix="/status", tags=["status"], dependencies=[Depends(require_key)])
@@ -21,8 +22,14 @@ def push_status(body: StatusIn, db: Session = Depends(get_db)):
     """Heartbeat from the detector, about once a second."""
     row = db.get(Status, 1)
     if row is None:
-        row = Status(id=1)
-        db.add(row)
+        db.add(Status(id=1))
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two heartbeats raced to create the single row. The other one won,
+            # which is all we needed; carry on and update it.
+            db.rollback()
+        row = db.get(Status, 1)
 
     row.state = body.state
     row.perclos = body.perclos
@@ -41,11 +48,10 @@ def read_status(db: Session = Depends(get_db)):
 
 
 def _out(row: Status) -> StatusOut:
-    updated = row.updated_at
-    if updated.tzinfo is None:     # SQLite returns naive datetimes, Postgres does not
-        updated = updated.replace(tzinfo=timezone.utc)
-
+    updated = as_utc(row.updated_at)
     online = utcnow() - updated < STALE_AFTER
-    
+
+    # A stale reading is reported as OFFLINE rather than as the last thing the
+    # detector said, so the app never shows a reassuring ALERT from an hour ago.
     return StatusOut(state=row.state if online else "OFFLINE", perclos=row.perclos,
                      updated_at=updated, online=online)

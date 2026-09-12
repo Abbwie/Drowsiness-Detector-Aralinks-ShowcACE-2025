@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'mock_data.dart';
+
+import 'settings_store.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -11,8 +12,27 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final name = TextEditingController(text: emergencyName);
-  final number = TextEditingController(text: emergencyNumber);
+  final store = SettingsStore();
+
+  // Seeded from the store's defaults so the page renders before the saved
+  // values come back off disk.
+  late final name = TextEditingController(text: store.emergencyName);
+  late final number = TextEditingController(text: store.emergencyNumber);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    await store.load();
+    if (!mounted) return;
+    setState(() {
+      name.text = store.emergencyName;
+      number.text = store.emergencyNumber;
+    });
+  }
 
   @override
   void dispose() {
@@ -21,9 +41,11 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
-  void save() {
-    emergencyName = name.text;
-    emergencyNumber = number.text;
+  Future<void> save() async {
+    store.emergencyName = name.text;
+    store.emergencyNumber = number.text;
+    await store.save();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Settings saved')),
     );
@@ -56,13 +78,19 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 12),
         _Toggle(
           label: 'Voice alert',
-          value: voiceAlertOn,
-          onChanged: (v) => setState(() => voiceAlertOn = v),
+          value: store.voiceAlertOn,
+          onChanged: (v) => setState(() => store.voiceAlertOn = v),
         ),
         _Toggle(
           label: 'Buzzer',
-          value: buzzerOn,
-          onChanged: (v) => setState(() => buzzerOn = v),
+          value: store.buzzerOn,
+          onChanged: (v) => setState(() => store.buzzerOn = v),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Saved on this phone. The detector still reads its own settings '
+          'from the laptop.',
+          style: TextStyle(fontSize: 12, color: muted),
         ),
         const SizedBox(height: 28),
         FilledButton(onPressed: save, child: const Text('Save')),

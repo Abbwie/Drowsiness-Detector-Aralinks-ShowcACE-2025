@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release builds do not inherit the debug manifest, where this used to be
+         the only declaration. Without it here, every call to the relay fails
+         with a SocketException in the installed APK but works in debug. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="vigiwatch_app"
         android:name="${applicationName}"

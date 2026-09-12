@@ -1,23 +1,138 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import 'api.dart';
 import 'history_page.dart';
 import 'home_page.dart';
 import 'login_page.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
+/// How often the live tile asks the relay what the detector is seeing. The
+/// detector heartbeats about once a second; polling that fast from a phone
+/// would burn battery for no visible gain.
+const _statusEvery = Duration(seconds: 3);
+
+/// The history moves only when an episode fires, so it can lag well behind.
+const _eventsEvery = Duration(seconds: 30);
+
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  final VigiWatchApi api;
+  final String driverName;
+
+  const HomeShell({super.key, required this.api, required this.driverName});
 
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int index = 0;
 
+  LiveStatus status = LiveStatus.offline();
+  List<DrowsyEvent> events = [];
+
+  bool loadingEvents = true;
+  String? eventsError;
+  String? statusError;
+
+  Timer? _statusTimer;
+  Timer? _eventsTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshStatus();
+    _refreshEvents();
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _stopPolling();
+    widget.api.close();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // No point polling a relay the driver cannot see. Resuming refreshes at
+    // once so the tile is never showing a reading from before the pause.
+    if (state == AppLifecycleState.resumed) {
+      _refreshStatus();
+      _refreshEvents();
+      _startPolling();
+    } else {
+      _stopPolling();
+    }
+  }
+
+  void _startPolling() {
+    _stopPolling();
+    _statusTimer = Timer.periodic(_statusEvery, (_) => _refreshStatus());
+    _eventsTimer = Timer.periodic(_eventsEvery, (_) => _refreshEvents());
+  }
+
+  void _stopPolling() {
+    _statusTimer?.cancel();
+    _eventsTimer?.cancel();
+    _statusTimer = null;
+    _eventsTimer = null;
+  }
+
+  Future<void> _refreshStatus() async {
+    try {
+      final next = await widget.api.status();
+      if (!mounted) return;
+      setState(() {
+        status = next;
+        statusError = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // Keep the last reading on screen but stop calling it live, so a dropped
+      // request cannot leave a stale ALERT looking current.
+      setState(() {
+        statusError = e.message;
+        status = LiveStatus(
+          state: 'OFFLINE',
+          perclos: status.perclos,
+          updatedAt: status.updatedAt,
+          online: false,
+        );
+      });
+    }
+  }
+
+  Future<void> _refreshEvents() async {
+    try {
+      final next = await widget.api.events(days: 7);
+      if (!mounted) return;
+      setState(() {
+        events = next;
+        eventsError = null;
+        loadingEvents = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        eventsError = e.message;
+        loadingEvents = false;
+      });
+    }
+  }
+
+  Future<void> refreshAll() async {
+    await Future.wait([_refreshStatus(), _refreshEvents()]);
+  }
+
   void logout() {
+    _stopPolling();
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
+      MaterialPageRoute(builder: (_) => LoginPage(api: widget.api)),
     );
   }
 
@@ -27,12 +142,32 @@ class _HomeShellState extends State<HomeShell> {
       appBar: AppBar(
         backgroundColor: bg,
         title: const Text('VigiWatch'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh),
+            onPressed: refreshAll,
+          ),
+        ],
       ),
       body: IndexedStack(
         index: index,
         children: [
-          HomePage(onSeeAll: () => setState(() => index = 1)),
-          const HistoryPage(),
+          HomePage(
+            driverName: widget.driverName,
+            status: status,
+            events: events,
+            loading: loadingEvents,
+            error: eventsError ?? statusError,
+            onRefresh: refreshAll,
+            onSeeAll: () => setState(() => index = 1),
+          ),
+          HistoryPage(
+            events: events,
+            loading: loadingEvents,
+            error: eventsError,
+            onRefresh: _refreshEvents,
+          ),
           SettingsPage(onLogout: logout),
         ],
       ),

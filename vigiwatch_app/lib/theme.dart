@@ -6,6 +6,11 @@ const card = Color(0xFF1E2026);
 const line = Color(0xFF2C2F36);
 const muted = Color(0xFF8E9199);
 
+// The live tile borrows the detector HUD's colours, so the phone and the
+// laptop screen agree at a glance during a demo.
+const green = Color(0xFF3BA55D);
+const amber = Color(0xFFE8A33D);
+
 ThemeData appTheme() {
   final base = ThemeData.dark(useMaterial3: true);
   return base.copyWith(

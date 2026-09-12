@@ -1,30 +1,60 @@
 import 'package:flutter/material.dart';
+
+import 'api.dart';
 import 'home_shell.dart';
+import 'settings_store.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  /// Injectable so the widget tests can sign in without a network.
+  final VigiWatchApi? api;
+
+  const LoginPage({super.key, this.api});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final email = TextEditingController(text: 'abigail@gmail.com');
-  final password = TextEditingController(text: 'password');
+  late final VigiWatchApi api = widget.api ?? VigiWatchApi();
+
+  final username = TextEditingController();
+  final password = TextEditingController();
+
+  bool busy = false;
+  String? error;
 
   @override
   void dispose() {
-    email.dispose();
+    username.dispose();
     password.dispose();
     super.dispose();
   }
 
-  void login() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomeShell()),
-    );
+  Future<void> login() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+
+    try {
+      final name = await api.login(username.text.trim(), password.text);
+      await SettingsStore.rememberDriver(name);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => HomeShell(api: api, driverName: name),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => error = e.message);
+    } finally {
+      // The page is gone on success, so only touch state if it is still here.
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   @override
@@ -44,24 +74,50 @@ class _LoginPageState extends State<LoginPage> {
                   const Text('Sign in', style: TextStyle(fontSize: 22)),
                   const SizedBox(height: 16),
                   TextField(
-                    controller: email,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(hintText: 'Email'),
+                    controller: username,
+                    enabled: !busy,
+                    autocorrect: false,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(hintText: 'Username'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: password,
+                    enabled: !busy,
                     obscureText: true,
+                    textInputAction: TextInputAction.go,
+                    onSubmitted: (_) => login(),
                     decoration: const InputDecoration(hintText: 'Password'),
                   ),
-                  const SizedBox(height: 20),
-                  FilledButton(onPressed: login, child: const Text('Login')),
-                  const SizedBox(height: 16),
-                  const Center(
-                    child: Text(
-                      "Don't have an account? Register",
-                      style: TextStyle(fontSize: 13, color: muted),
+                  if (error != null) ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.error_outline, color: red, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            error!,
+                            style: const TextStyle(fontSize: 13, color: red),
+                          ),
+                        ),
+                      ],
                     ),
+                  ],
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: busy ? null : login,
+                    child: busy
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Login'),
                   ),
                 ],
               ),

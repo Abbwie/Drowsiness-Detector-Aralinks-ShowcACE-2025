@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'mock_data.dart';
+
+import 'api.dart';
 import 'theme.dart';
 
 const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -25,6 +26,21 @@ String formatDay(DateTime t) {
   if (diff == 0) return 'Today';
   if (diff == 1) return 'Yesterday';
   return _days[t.weekday - 1];
+}
+
+/// Plain-language name for a detector state, plus the colour it earns.
+/// The raw values come straight from the detector's HUD.
+({String label, Color colour}) describeState(LiveStatus s) {
+  if (!s.online) return (label: 'Detector offline', colour: muted);
+  return switch (s.state) {
+    'ALERT' => (label: 'Awake', colour: green),
+    'FATIGUE WARNING' => (label: 'Getting tired', colour: amber),
+    'DROWSY' => (label: 'Drowsy', colour: red),
+    'MICROSLEEP' => (label: 'Microsleep', colour: red),
+    'CALIBRATING' => (label: 'Calibrating', colour: muted),
+    'WARMING UP' => (label: 'Warming up', colour: muted),
+    _ => (label: s.state, colour: muted),
+  };
 }
 
 class Logo extends StatelessWidget {
@@ -56,6 +72,57 @@ class Logo extends StatelessWidget {
   }
 }
 
+/// The live tile: what the detector is seeing this second.
+class StatusCard extends StatelessWidget {
+  final LiveStatus status;
+  const StatusCard({super.key, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = describeState(status);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: status.online ? d.colour : line),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: d.colour, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(d.label,
+                    style: const TextStyle(
+                        fontSize: 17, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(
+                  status.online
+                      ? 'Eyes closed ${(status.perclos * 100).round()}% of the last 30s'
+                      : 'Start the detector on the laptop to see live status',
+                  style: const TextStyle(fontSize: 12, color: muted),
+                ),
+              ],
+            ),
+          ),
+          if (status.online)
+            Text(formatTime(status.updatedAt),
+                style: const TextStyle(fontSize: 12, color: muted)),
+        ],
+      ),
+    );
+  }
+}
+
 class EventTile extends StatelessWidget {
   final DrowsyEvent event;
   final bool showDay;
@@ -64,9 +131,13 @@ class EventTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = showDay
+    final when = showDay
         ? '${formatDay(event.time)}, ${formatTime(event.time)}'
         : formatTime(event.time);
+
+    // A yawn has no meaningful duration -- the detector reports it as 0.
+    final detail =
+        event.kind == 'YAWN' ? 'Yawn' : '${event.seconds.toStringAsFixed(1)}s';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -81,14 +152,18 @@ class EventTile extends StatelessWidget {
           Container(
             width: 8,
             height: 8,
-            decoration: const BoxDecoration(color: red, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: event.kind == 'YAWN' ? muted : red,
+              shape: BoxShape.circle,
+            ),
           ),
           const SizedBox(width: 12),
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
-          Text(
-            '${event.seconds}s',
-            style: const TextStyle(fontSize: 13, color: muted),
-          ),
+          Expanded(child: Text(when, style: const TextStyle(fontSize: 14))),
+          if (event.kind == 'MICROSLEEP') ...[
+            const Text('microsleep', style: TextStyle(fontSize: 11, color: red)),
+            const SizedBox(width: 8),
+          ],
+          Text(detail, style: const TextStyle(fontSize: 13, color: muted)),
         ],
       ),
     );
@@ -96,12 +171,12 @@ class EventTile extends StatelessWidget {
 }
 
 class WeekChart extends StatelessWidget {
-  const WeekChart({super.key});
+  final List<int> counts;
+  const WeekChart({super.key, required this.counts});
 
   @override
   Widget build(BuildContext context) {
-    final counts = weekCounts;
-    final max = counts.reduce((a, b) => a > b ? a : b);
+    final max = counts.isEmpty ? 0 : counts.reduce((a, b) => a > b ? a : b);
     final now = DateTime.now();
 
     return Container(
@@ -116,7 +191,7 @@ class WeekChart extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: List.generate(7, (i) {
-            final count = counts[i];
+            final count = i < counts.length ? counts[i] : 0;
             final day = now.subtract(Duration(days: 6 - i));
             return Expanded(
               child: Column(
@@ -150,6 +225,40 @@ class WeekChart extends StatelessWidget {
             );
           }),
         ),
+      ),
+    );
+  }
+}
+
+/// Shown in place of a list when a request failed.
+class ErrorNote extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const ErrorNote({super.key, required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: line),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.cloud_off, color: muted),
+          const SizedBox(height: 10),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: muted)),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('Try again', style: TextStyle(color: red)),
+          ),
+        ],
       ),
     );
   }

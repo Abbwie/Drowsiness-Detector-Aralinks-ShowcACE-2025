@@ -1,35 +1,71 @@
 import 'package:flutter/material.dart';
-import 'mock_data.dart';
+
+import 'api.dart';
+import 'stats.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 class HistoryPage extends StatelessWidget {
-  const HistoryPage({super.key});
+  final List<DrowsyEvent> events;
+  final bool loading;
+  final String? error;
+  final Future<void> Function() onRefresh;
+
+  const HistoryPage({
+    super.key,
+    required this.events,
+    required this.loading,
+    required this.error,
+    required this.onRefresh,
+  });
 
   @override
   Widget build(BuildContext context) {
-    // Group the events under the day they happened.
-    final byDay = <DateTime, List<DrowsyEvent>>{};
-    for (final e in events) {
-      final day = DateTime(e.time.year, e.time.month, e.time.day);
-      byDay.putIfAbsent(day, () => []).add(e);
+    if (loading) {
+      return const Center(child: CircularProgressIndicator(color: red));
     }
-    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text(
-          '${events.length} times in the last 7 days',
-          style: const TextStyle(color: muted),
+    if (error != null) {
+      return RefreshIndicator(
+        color: red,
+        backgroundColor: card,
+        onRefresh: onRefresh,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [ErrorNote(message: error!, onRetry: onRefresh)],
         ),
-        const SizedBox(height: 20),
-        for (final day in days) ...[
-          _DayHeader(day: day, count: byDay[day]!.length),
-          for (final e in byDay[day]!) EventTile(event: e, showDay: false),
-          const SizedBox(height: 16),
+      );
+    }
+
+    final groups = byDay(events);
+
+    return RefreshIndicator(
+      color: red,
+      backgroundColor: card,
+      onRefresh: onRefresh,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            '${events.length} times in the last 7 days',
+            style: const TextStyle(color: muted),
+          ),
+          const SizedBox(height: 20),
+          if (groups.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 40),
+              child: Center(
+                child: Text('No episodes recorded yet.',
+                    style: TextStyle(color: muted)),
+              ),
+            ),
+          for (final g in groups) ...[
+            _DayHeader(day: g.key, count: g.value.length),
+            for (final e in g.value) EventTile(event: e, showDay: false),
+            const SizedBox(height: 16),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
