@@ -129,12 +129,12 @@ BUZZ_SECONDS = 5.0        # how long one alert sounds for. Ten was long enough
                           # changed without re-flashing the board; the sketch's
                           # own timer stays as the backstop for a laptop that
                           # crashes mid-buzz.
-BUZZ_COOLDOWN = 20.0      # minimum seconds between one buzz STARTING and the
+BUZZ_COOLDOWN = 30.0      # minimum seconds between one buzz STARTING and the
                           # next. At a 5 s burst on a 5 s alert cooldown the
                           # next one began the moment the last ended, so the
                           # buzzer simply ran continuously for as long as the
                           # score stayed up -- painful, and nothing you can
-                          # drive through. This guarantees 15 s of quiet
+                          # drive through. This guarantees 25 s of quiet
                           # between bursts. The voice alert is not held back;
                           # it is the buzzer that hurts.
 ARDUINO_BAUD = 9600
