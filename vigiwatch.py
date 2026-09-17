@@ -28,7 +28,7 @@
 #   Run:  python vigiwatch.py --webcam 0
 #         python vigiwatch.py --no-arduino     (on-screen alerts only)
 #         python vigiwatch.py --arduino-port COM5
-#   Keys: q = quit, c = recalibrate
+#   Keys: q = quit, c = recalibrate, s = silence the buzzer
 
 import argparse
 import os
@@ -79,18 +79,36 @@ PROC_WIDTH = 640          # width we run detection at. Bigger = better landmark
                           # frame rate does not distort the score.
 
 # PERCLOS
+#
+# These were tightened after road testing: the first set let closures through
+# that a driver should have been alerted for. The numbers are deliberately
+# strict, because the two kinds of mistake are not equal here -- a false alarm
+# is a moment of annoyance, a missed one is a car with nobody watching the road.
 PERCLOS_WINDOW = 30.0     # seconds of history the score is measured over.
                           # Research standard is 60 s; 30 s reacts faster, which
                           # is better for a live demo.
-                          
+
 PERCLOS_CLOSED_LEVEL = 0.20   # P80: eye counts as "closed" at <= 20% open.
-PERCLOS_WARN = 0.08       # 8% of the window closed -> early fatigue warning
-PERCLOS_ALERT = 0.15      # 15% -> drowsy, sound the alarm
-PERCLOS_MIN_COVERAGE = 10.0   # need this many seconds of data before scoring
+PERCLOS_WARN = 0.06       # was 0.08. Over a 30 s window this is 1.8 s of
+                          # closure. Normal blinking runs about 3-4% (a 150 ms
+                          # blink is ~0.5% of the window, at 15-20 blinks/min),
+                          # so this sits just above resting and no lower --
+                          # a warning that is always on is one you stop reading.
+PERCLOS_ALERT = 0.10      # was 0.15. 3.0 s of the last 30 spent with the eyes
+                          # at least 80% shut, down from 4.5 s. At 100 km/h the
+                          # old threshold meant 125 m travelled blind before the
+                          # alarm; this one, 83 m.
+PERCLOS_MIN_COVERAGE = 10.0   # need this many seconds of data before scoring.
+                          # Left alone: it is a statistical-validity guard, not
+                          # a sensitivity knob, and the microsleep path below
+                          # already covers the warm-up gap.
 
 # Microsleep catch. PERCLOS is a slow average, so eyes slamming shut for a few
-# straight seconds would only move it a little. This is the fast path.
-MICROSLEEP_SECONDS = 1.5
+# straight seconds would only move it a little. This is the fast path, and it
+# runs during warm-up too, before there is enough history to score.
+MICROSLEEP_SECONDS = 1.0  # was 1.5. A long blink is 300-400 ms, so a full
+                          # second of closure is not a blink by any measure --
+                          # it is 28 m of road at 100 km/h with the eyes shut.
 
 # Calibration
 CALIB_SECONDS = 8.0       # how long we watch the driver's normal open eyes
@@ -131,6 +149,13 @@ SETTINGS_EVERY = 5.0      # seconds between reads of the app's alert switches.
                           # the free Railway tier has to serve.
 
 # Arduino (vigiwatch.ino: buzzer on D2, LED on D4)
+BUZZ_SECONDS = 5.0        # how long one alert sounds for. Ten was long enough
+                          # to be punishing rather than rousing, and a driver
+                          # fumbling to silence it is a driver not steering.
+                          # Timed here rather than in the sketch so it can be
+                          # changed without re-flashing the board; the sketch's
+                          # own timer stays as the backstop for a laptop that
+                          # crashes mid-buzz.
 ARDUINO_BAUD = 9600
 ARDUINO_KEYWORDS = ("ARDUINO", "CH340", "CH341", "CP210", "FT232",
                     "USB-SERIAL", "USB SERIAL")
@@ -388,7 +413,11 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
         draw_text(img, "{}  {}".format(label, value), right, y, 0.6, align="right")
         y += 28
 
-    draw_text(img, "q quit    c recalibrate", left, h - HUD_MARGIN, 0.5, (170, 170, 170))
+    # s is only listed when there is a board to silence.
+    hints = "q quit    c recalibrate"
+    if arduino_ok is not None:
+        hints += "    s silence buzzer"
+    draw_text(img, hints, left, h - HUD_MARGIN, 0.5, (170, 170, 170))
 
     # Bottom right, opposite the key hints: whether the buzzer and LED can
     # actually be reached. Amber rather than red when it is missing -- a board
@@ -637,19 +666,41 @@ def send_arduino(cmd):
     return False
 
 
-def trigger_buzzer():
-    """Sound the buzzer. Call from a thread so serial lag never stalls a frame.
+# Bumped whenever a buzz starts or is silenced. A timer only ever stops the
+# buzz it started: without this, an alert firing while the previous one was
+# still counting down would be cut short by the older thread.
+_buzz_lock = Lock()
+_buzz_token = 0
 
-    The sketch stops itself after its own 10-second timer, so even a crash on
-    this side cannot leave the buzzer latched on -- which is exactly what the
-    old board used to do.
+
+def trigger_buzzer():
+    """Sound the buzzer for BUZZ_SECONDS, then silence it.
+
+    Always call this on its own thread -- it sleeps for the duration. The
+    sketch runs a timer of its own as well, so even a crash on this side cannot
+    leave the buzzer latched on; that is exactly what the old board used to do.
     """
-    if send_arduino("BUZZ"):
-        print("Buzzer on (the sketch stops it after 10 s)")
+    global _buzz_token
+    with _buzz_lock:
+        _buzz_token += 1
+        mine = _buzz_token
+
+    if not send_arduino("BUZZ"):
+        return
+    print("Buzzer on for {:.0f} s (s to silence)".format(BUZZ_SECONDS))
+
+    time.sleep(BUZZ_SECONDS)
+    with _buzz_lock:
+        if mine != _buzz_token:
+            return          # superseded by a newer alert, or already silenced
+    send_arduino("BUZZOFF")
 
 
 def stop_buzzer():
-    """Cut the buzzer early, before the sketch's own timer runs out."""
+    """Cut the buzzer now -- the s key, or the driver coming round early."""
+    global _buzz_token
+    with _buzz_lock:
+        _buzz_token += 1    # any timer still counting down is now stale
     send_arduino("BUZZOFF")
 
 
@@ -836,8 +887,8 @@ def main():
             if arduino_enabled:
                 set_led(drowsy_now)     # edge-triggered inside set_led
                 if was_drowsy and not drowsy_now:
-                    # Eyes open again before the sketch's 10 s timer was up.
-                    # Cut it now rather than make them sit through the rest.
+                    # Eyes open again before the 5 s was up. Cut it now rather
+                    # than make them sit through the rest of it.
                     stop_buzzer()
             was_drowsy = drowsy_now
 
@@ -887,6 +938,13 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
+            if key == ord("s") and arduino_enabled:
+                # Manual override. The alert still stands on screen and the
+                # cooldown is untouched, so a driver who is genuinely drowsy
+                # gets buzzed again at the next alert rather than silencing
+                # the system for the rest of the drive.
+                stop_buzzer()
+                print("Buzzer silenced")
             if key == ord("c"):
                 print("Recalibrating - look at the camera with your eyes open.")
                 calib.reset()
