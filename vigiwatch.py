@@ -1,34 +1,3 @@
-# VigiWatch - Driver Drowsiness Detection (PERCLOS edition)
-#
-# WHAT CHANGED FROM THE OLD VERSION
-#   * Drowsiness is now scored with PERCLOS (P80) instead of a raw EAR
-#     threshold plus a consecutive-frame counter.
-#   * The Arduino buzzer and LED are back, but optional this time. The board is
-#     found by scanning at startup and the detector runs fine without one, so a
-#     missing Nano costs you the hardware alert and nothing else. The phone
-#     app's Buzzer switch reaches it through the relay.
-#
-# WHY PERCLOS IS MORE ACCURATE THAN A BARE EAR THRESHOLD
-#   EAR is still the raw signal -- PERCLOS is built on top of it. What changes
-#   is the decision logic. The old rule was "is EAR below 0.3 for 30 frames in
-#   a row?", which breaks in three ways:
-#     1. 0.3 is one fixed number for every face. Eye shape, glasses, and how
-#        far you sit from the camera all shift EAR, so the same number is too
-#        strict for one person and too loose for another.
-#     2. "30 frames" is not a fixed amount of time. At 30 fps that is 1 second;
-#        at 10 fps it is 3 seconds. The alert speed changes with the webcam.
-#     3. A normal blink dips EAR below 0.3, so the counter kept getting nudged
-#        by ordinary blinking.
-#   PERCLOS fixes all three. Each driver's own open-eye EAR is measured at
-#   startup, closure is expressed as a percentage of THAT person's eye opening,
-#   and the score is the fraction of TIME (not frames) the eyes were at least
-#   80% closed across a rolling window. A 150 ms blink adds about 0.5% to a
-#   30 s window, so blinks no longer register as drowsiness.
-#
-#   Run:  python vigiwatch.py --webcam 0
-#         python vigiwatch.py --no-arduino     (on-screen alerts only)
-#         python vigiwatch.py --arduino-port COM5
-#   Keys: q = quit, c = recalibrate, s = silence the buzzer
 
 import argparse
 import os
@@ -57,14 +26,14 @@ try:
     import serial
     import serial.tools.list_ports
 except ImportError:
-    # Optional on purpose. The buzzer is a bonus on top of the on-screen and
-    # spoken alerts, so a machine without pyserial should still run the
-    # detector rather than refuse to start.
+    
     serial = None
 
 try:
     from dotenv import load_dotenv
-    # Explicit path, so it works no matter which directory you run from.
+
+
+   
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except ImportError:
     pass
@@ -73,10 +42,7 @@ except ImportError:
 
 # Camera / processing
 PROC_WIDTH = 640          # width we run detection at. Bigger = better landmark
-                          # precision (so a cleaner EAR signal), but slower.
-                          # The old code used 450; 640 gives noticeably steadier
-                          # eye landmarks, and PERCLOS is time-based so a lower
-                          # frame rate does not distort the score.
+                        
 
 # PERCLOS
 #
@@ -98,6 +64,13 @@ PERCLOS_ALERT = 0.10      # was 0.15. 3.0 s of the last 30 spent with the eyes
                           # at least 80% shut, down from 4.5 s. At 100 km/h the
                           # old threshold meant 125 m travelled blind before the
                           # alarm; this one, 83 m.
+PERCLOS_REARM = PERCLOS_WARN  # after a drowsy alert the score has to fall back
+                          # to the warning line before the slow path may fire
+                          # again. Without this, one closure sits in the 30 s
+                          # window and re-alarms every cooldown until it ages
+                          # out -- the same episode, alerted twenty times.
+                          # Microsleep is exempt: a fresh run of shut eyes is
+                          # new evidence, not the old one decaying.
 PERCLOS_MIN_COVERAGE = 10.0   # need this many seconds of data before scoring.
                           # Left alone: it is a statistical-validity guard, not
                           # a sensitivity knob, and the microsleep path below
@@ -156,6 +129,14 @@ BUZZ_SECONDS = 5.0        # how long one alert sounds for. Ten was long enough
                           # changed without re-flashing the board; the sketch's
                           # own timer stays as the backstop for a laptop that
                           # crashes mid-buzz.
+BUZZ_COOLDOWN = 20.0      # minimum seconds between one buzz STARTING and the
+                          # next. At a 5 s burst on a 5 s alert cooldown the
+                          # next one began the moment the last ended, so the
+                          # buzzer simply ran continuously for as long as the
+                          # score stayed up -- painful, and nothing you can
+                          # drive through. This guarantees 15 s of quiet
+                          # between bursts. The voice alert is not held back;
+                          # it is the buzzer that hurts.
 ARDUINO_BAUD = 9600
 ARDUINO_KEYWORDS = ("ARDUINO", "CH340", "CH341", "CP210", "FT232",
                     "USB-SERIAL", "USB SERIAL")
@@ -681,12 +662,15 @@ def trigger_buzzer():
     leave the buzzer latched on; that is exactly what the old board used to do.
     """
     global _buzz_token
-    with _buzz_lock:
-        _buzz_token += 1
-        mine = _buzz_token
-
     if not send_arduino("BUZZ"):
         return
+
+    with _buzz_lock:
+        # Claimed after the write, not before. A BUZZ that never reached the
+        # board must not invalidate the timer of a buzz that is still running,
+        # or that one loses its BUZZOFF and rides the sketch's timer instead.
+        _buzz_token += 1
+        mine = _buzz_token
     print("Buzzer on for {:.0f} s (s to silence)".format(BUZZ_SECONDS))
 
     time.sleep(BUZZ_SECONDS)
@@ -778,6 +762,10 @@ def main():
 
     closed_since = None          # start of the current run of closed frames
     was_drowsy = False           # previous frame's verdict, for the LED edge
+    perclos_armed = True         # False once the slow path has alerted, until
+                                 # the score falls back to PERCLOS_REARM
+    buzzer_muted = False         # s pressed; clears when the episode ends
+    last_buzz = 0.0
     sleepy_sets = 0
     last_drowsy_alert = 0.0
     last_yawn_alert = 0.0
@@ -886,19 +874,35 @@ def main():
             drowsy_now = state in ("DROWSY", "MICROSLEEP")
             if arduino_enabled:
                 set_led(drowsy_now)     # edge-triggered inside set_led
-                if was_drowsy and not drowsy_now:
-                    # Eyes open again before the 5 s was up. Cut it now rather
-                    # than make them sit through the rest of it.
-                    stop_buzzer()
+                if not drowsy_now:
+                    if was_drowsy:
+                        # Eyes open again before the burst was up. Cut it now
+                        # rather than make them sit through the rest of it.
+                        stop_buzzer()
+                    # Cleared on every clear frame, not just on the falling
+                    # edge. Pressing s while already alert would otherwise
+                    # leave the mute set with no edge coming to lift it, and
+                    # swallow the buzzer for the whole of the NEXT episode.
+                    buzzer_muted = False
             was_drowsy = drowsy_now
 
-            if drowsy_now and now - last_drowsy_alert >= DROWSY_COOLDOWN:
+            if score < PERCLOS_REARM:
+                perclos_armed = True
+
+            if (drowsy_now and now - last_drowsy_alert >= DROWSY_COOLDOWN
+                    and (state == "MICROSLEEP" or perclos_armed)):
                 last_drowsy_alert = now
                 sleepy_sets += 1
+                if state == "DROWSY":
+                    # One episode, one alert from the slow path.
+                    perclos_armed = False
                 if setting("voice_alert_on"):
                     Thread(target=speak, args=("Wake up! Keep your eyes open!",),
                            daemon=True).start()
-                if arduino_enabled and setting("buzzer_on"):
+                if (arduino_enabled and setting("buzzer_on")
+                        and not buzzer_muted
+                        and now - last_buzz >= BUZZ_COOLDOWN):
+                    last_buzz = now
                     # Threaded: a write to a board that has just been unplugged
                     # blocks, and a stalled frame loop is a stalled detector.
                     Thread(target=trigger_buzzer, daemon=True).start()
@@ -939,12 +943,14 @@ def main():
             if key == ord("q"):
                 break
             if key == ord("s") and arduino_enabled:
-                # Manual override. The alert still stands on screen and the
-                # cooldown is untouched, so a driver who is genuinely drowsy
-                # gets buzzed again at the next alert rather than silencing
-                # the system for the rest of the drive.
+                # Silences the buzzer for the rest of THIS episode, not just
+                # the current burst -- cutting one burst was useless, the next
+                # alert simply started another. It re-arms as soon as the
+                # driver reads alert again, so this cannot mute the drive.
+                # The screen alert and the voice are untouched.
                 stop_buzzer()
-                print("Buzzer silenced")
+                buzzer_muted = True
+                print("Buzzer muted until you read alert again")
             if key == ord("c"):
                 print("Recalibrating - look at the camera with your eyes open.")
                 calib.reset()
