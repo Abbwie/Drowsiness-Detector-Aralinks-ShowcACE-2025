@@ -546,7 +546,7 @@ def open_arduino(port, baudrate=ARDUINO_BAUD):
             s.flush()
             if s.readline().decode(errors="ignore").strip() == "VIGIWATCH":
                 return s
-        print("Arduino: {} did not answer PING - not the VigiWatch board"
+        print("Arduino: {} did not answer PING - not the Sentra board"
               .format(port))
     except Exception as exc:
         print("Arduino: {} failed: {}".format(port, exc))
@@ -716,7 +716,7 @@ def close_arduino():
 
 # ----------------------------------------------------------------- main -----
 def main():
-    ap = argparse.ArgumentParser(description="VigiWatch drowsiness detector (PERCLOS)")
+    ap = argparse.ArgumentParser(description="Sentra drowsiness detector (PERCLOS)")
     ap.add_argument("-w", "--webcam", type=int, default=0, help="webcam index")
     ap.add_argument("--arduino-port", default=os.environ.get("ARDUINO_PORT", ""),
                     help="serial port of the board, e.g. COM5. Default: scan "
@@ -775,10 +775,11 @@ def main():
     fps = 0.0
     last_frame_time = time.time()
 
-    cv2.namedWindow("VigiWatch", cv2.WINDOW_NORMAL)
-    print("Starting VigiWatch. Look at the camera with your eyes open normally.")
-    print("Calibrating for {:.0f} seconds...  (q = quit, c = recalibrate)"
-          .format(CALIB_SECONDS))
+    cv2.namedWindow("Sentra", cv2.WINDOW_NORMAL)
+    print("\n  Sentra - Keeps You in Sight\n")
+    print("Look at the camera with your eyes open normally.")
+    print("Calibrating for {:.0f} seconds...  (q = quit, c = recalibrate{})"
+          .format(CALIB_SECONDS, ", s = silence buzzer" if arduino_enabled else ""))
 
     try:
         while True:
@@ -938,7 +939,7 @@ def main():
                      calib.elapsed(now), ear, openness, mouth_opening, fps,
                      arduino_connected() if arduino_enabled else None)
 
-            cv2.imshow("VigiWatch", display)
+            cv2.imshow("Sentra", display)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
@@ -967,7 +968,7 @@ def main():
             close_arduino()
         cap.release()
         cv2.destroyAllWindows()
-        print("VigiWatch terminated")
+        print("Sentra terminated")
 
 
 if __name__ == "__main__":

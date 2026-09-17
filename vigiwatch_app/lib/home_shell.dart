@@ -129,6 +129,45 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     await Future.wait([_refreshStatus(), _refreshEvents()]);
   }
 
+  Future<void> clearHistory() async {
+    try {
+      final removed = await widget.api.clearEvents();
+      if (!mounted) return;
+      setState(() {
+        events = [];
+        eventsError = null;
+      });
+      _say(removed == 0
+          ? 'There was nothing to delete'
+          : removed == 1
+              ? 'Deleted 1 episode'
+              : 'Deleted $removed episodes');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _say(e.message);
+    }
+  }
+
+  Future<void> deleteEvent(int id) async {
+    // Dropped from the list before the request goes out, because a Dismissible
+    // whose item is still in the tree after the swipe throws. That makes this
+    // optimistic, so a failure has to put the row back.
+    final before = events;
+    setState(() => events = events.where((e) => e.id != id).toList());
+    try {
+      await widget.api.deleteEvent(id);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => events = before);
+      _say('Could not delete that: ${e.message}');
+    }
+  }
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void logout() {
     _stopPolling();
     Navigator.of(context).pushReplacement(
@@ -141,7 +180,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: bg,
-        title: const Text('VigiWatch'),
+        title: const Text('Sentra'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -167,6 +206,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             loading: loadingEvents,
             error: eventsError,
             onRefresh: _refreshEvents,
+            onClear: clearHistory,
+            onDelete: deleteEvent,
           ),
           SettingsPage(api: widget.api, onLogout: logout),
         ],

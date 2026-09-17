@@ -20,6 +20,10 @@ class _SettingsPageState extends State<SettingsPage> {
   /// the last exchange with the relay worked.
   String? syncError;
 
+  /// The driver has moved a switch since the last time the relay and this page
+  /// agreed. Stops an in-flight read from overwriting a fresh tap.
+  bool _touched = false;
+
   // Seeded from the store's defaults so the page renders before the saved
   // values come back off disk.
   late final name = TextEditingController(text: store.emergencyName);
@@ -47,9 +51,14 @@ class _SettingsPageState extends State<SettingsPage> {
       final remote = await widget.api.settings();
       if (!mounted) return;
       setState(() {
-        store.voiceAlertOn = remote.voiceAlertOn;
-        store.buzzerOn = remote.buzzerOn;
         syncError = null;
+        // Not if the driver has flipped something while this was still in
+        // flight: a reply to a request that predates their tap must not
+        // silently undo it. They would see the switch move back on its own.
+        if (!_touched) {
+          store.voiceAlertOn = remote.voiceAlertOn;
+          store.buzzerOn = remote.buzzerOn;
+        }
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -82,6 +91,7 @@ class _SettingsPageState extends State<SettingsPage> {
         store.voiceAlertOn = stored.voiceAlertOn;
         store.buzzerOn = stored.buzzerOn;
         syncError = null;
+        _touched = false;   // relay and page agree again
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -124,12 +134,18 @@ class _SettingsPageState extends State<SettingsPage> {
         _Toggle(
           label: 'Voice alert',
           value: store.voiceAlertOn,
-          onChanged: (v) => setState(() => store.voiceAlertOn = v),
+          onChanged: (v) => setState(() {
+            store.voiceAlertOn = v;
+            _touched = true;
+          }),
         ),
         _Toggle(
           label: 'Buzzer',
           value: store.buzzerOn,
-          onChanged: (v) => setState(() => store.buzzerOn = v),
+          onChanged: (v) => setState(() {
+            store.buzzerOn = v;
+            _touched = true;
+          }),
         ),
         const SizedBox(height: 8),
         Text(

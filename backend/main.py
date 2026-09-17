@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="VigiWatch API", lifespan=lifespan)
+app = FastAPI(title="Sentra API", lifespan=lifespan)
 
 # The Android build does not need CORS; the Flutter web build does.
 app.add_middleware(CORSMiddleware, allow_origins=["*"],

@@ -69,7 +69,7 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Center(child: Logo(size: 48)),
+                  const Center(child: Logo(size: 48, withMotto: true)),
                   const SizedBox(height: 40),
                   const Text('Sign in', style: TextStyle(fontSize: 22)),
                   const SizedBox(height: 16),

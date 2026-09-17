@@ -146,6 +146,17 @@ class VigiWatchApi {
         .toList();
   }
 
+  /// Wipes the episode history. Returns how many the relay actually removed.
+  Future<int> clearEvents() async =>
+      _deleted(await _send('DELETE', '/events'));
+
+  /// Removes one episode. 0 means it was already gone, which is not an error.
+  Future<int> deleteEvent(int id) async =>
+      _deleted(await _send('DELETE', '/events/$id'));
+
+  static int _deleted(dynamic json) =>
+      ((json as Map<String, dynamic>)['deleted'] as num?)?.toInt() ?? 0;
+
   Future<AlertSettings> settings() async => AlertSettings.fromJson(
       await _send('GET', '/settings') as Map<String, dynamic>);
 
@@ -174,6 +185,8 @@ class VigiWatchApi {
         call = _client.post(uri, headers: _headers, body: jsonEncode(body));
       } else if (method == 'PUT') {
         call = _client.put(uri, headers: _headers, body: jsonEncode(body));
+      } else if (method == 'DELETE') {
+        call = _client.delete(uri, headers: _headers);
       } else {
         call = _client.get(uri, headers: _headers);
       }

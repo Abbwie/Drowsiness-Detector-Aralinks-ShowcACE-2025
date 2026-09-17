@@ -1,11 +1,11 @@
 {
-    "name": "vigiwatch_app",
-    "short_name": "vigiwatch_app",
+    "name": "Sentra",
+    "short_name": "Sentra",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Sentra - Keeps You in Sight. Live driver drowsiness monitoring.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

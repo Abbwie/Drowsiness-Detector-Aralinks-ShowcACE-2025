@@ -13,7 +13,7 @@ class VigiWatchApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'VigiWatch',
+      title: 'Sentra',
       debugShowCheckedModeBanner: false,
       theme: appTheme(),
       home: isConfigured ? const LoginPage() : const _NotConfigured(),
@@ -36,7 +36,7 @@ class _NotConfigured extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Logo(size: 44),
+                const Logo(size: 44, withMotto: true),
                 const SizedBox(height: 28),
                 const Text('Not configured',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),

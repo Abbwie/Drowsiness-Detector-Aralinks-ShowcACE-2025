@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'theme.dart';
 
+/// The product motto. Defined once so the wording cannot drift between the
+/// login screen and anywhere else it is shown.
+const String motto = 'Keeps You in Sight';
+
 const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const _months = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -45,11 +49,16 @@ String formatDay(DateTime t) {
 
 class Logo extends StatelessWidget {
   final double size;
-  const Logo({super.key, this.size = 40});
+
+  /// Sets the motto under the wordmark. Off by default, so the mark can still
+  /// sit in a tight space without the second line.
+  final bool withMotto;
+
+  const Logo({super.key, this.size = 40, this.withMotto = false});
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final mark = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
@@ -64,8 +73,31 @@ class Logo extends StatelessWidget {
         ),
         SizedBox(width: size * 0.3),
         Text(
-          'VigiWatch',
+          'Sentra',
           style: TextStyle(fontSize: size * 0.55, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+
+    if (!withMotto) return mark;
+
+    // Everything scales off `size`, so the motto keeps its proportion to the
+    // wordmark wherever the logo is used, rather than needing a tuned value
+    // per screen. The wide letter spacing is what stops a short line of muted
+    // text reading as a caption on the mark.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        mark,
+        SizedBox(height: size * 0.24),
+        Text(
+          motto,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: size * 0.28,
+            color: muted,
+            letterSpacing: size * 0.03,
+          ),
         ),
       ],
     );

@@ -1,4 +1,4 @@
-# vigiwatch_app
+# Sentra
 
 A new Flutter project.
 

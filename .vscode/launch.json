@@ -11,14 +11,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "VigiWatch app",
+      "name": "Sentra app",
       "request": "launch",
       "type": "dart",
       "program": "vigiwatch_app/lib/main.dart",
       "args": ["--dart-define-from-file=../.env"]
     },
     {
-      "name": "VigiWatch app (Chrome)",
+      "name": "Sentra app (Chrome)",
       "request": "launch",
       "type": "dart",
       "program": "vigiwatch_app/lib/main.dart",
@@ -28,7 +28,7 @@
     {
       // Without the defines, to check the "Not configured" screen still shows
       // rather than the app pointing at nothing and failing later.
-      "name": "VigiWatch app (unconfigured)",
+      "name": "Sentra app (unconfigured)",
       "request": "launch",
       "type": "dart",
       "program": "vigiwatch_app/lib/main.dart"

@@ -46,6 +46,12 @@ class EventOut(BaseModel):
     kind: str
 
 
+class DeleteResult(BaseModel):
+    """How many rows went. The app reports the number back to the driver, so a
+    delete that matched nothing is visibly different from one that worked."""
+    deleted: int
+
+
 class StatusIn(BaseModel):
     state: Label
     perclos: float = Field(default=0.0, ge=0.0, le=1.0)   # PERCLOS is a fraction
