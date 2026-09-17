@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import Base, engine
-from routers import events, login, status
+from routers import events, login, settings, status
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 app.include_router(login.router)
 app.include_router(events.router)
 app.include_router(status.router)
+app.include_router(settings.router)
 
 
 @app.get("/health")

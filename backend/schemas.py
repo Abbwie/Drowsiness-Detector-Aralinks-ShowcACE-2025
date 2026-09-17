@@ -56,3 +56,18 @@ class StatusOut(BaseModel):
     perclos: float
     updated_at: UtcDatetime
     online: bool
+
+
+class SettingsIn(BaseModel):
+    """A full replacement, not a patch -- the app always sends both switches,
+    so there is no way to read one back stale and write it over the other."""
+    buzzer_on: bool
+    voice_alert_on: bool
+
+
+class SettingsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    buzzer_on: bool
+    voice_alert_on: bool
+    updated_at: UtcDatetime

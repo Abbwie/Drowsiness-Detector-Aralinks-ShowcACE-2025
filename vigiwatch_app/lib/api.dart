@@ -69,6 +69,26 @@ class LiveStatus {
       );
 }
 
+/// The alert switches, shared with the detector through the relay.
+///
+/// The detector polls these every few seconds, so flipping one here reaches the
+/// laptop without touching it. Both default on: if the relay ever answers
+/// without a field, the safe reading is that the alert is armed.
+class AlertSettings {
+  final bool buzzerOn;
+  final bool voiceAlertOn;
+
+  const AlertSettings({required this.buzzerOn, required this.voiceAlertOn});
+
+  factory AlertSettings.fromJson(Map<String, dynamic> json) => AlertSettings(
+        buzzerOn: json['buzzer_on'] as bool? ?? true,
+        voiceAlertOn: json['voice_alert_on'] as bool? ?? true,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'buzzer_on': buzzerOn, 'voice_alert_on': voiceAlertOn};
+}
+
 /// A failure worth showing the driver, already phrased for a snackbar.
 class ApiException implements Exception {
   final String message;
@@ -126,6 +146,15 @@ class VigiWatchApi {
         .toList();
   }
 
+  Future<AlertSettings> settings() async => AlertSettings.fromJson(
+      await _send('GET', '/settings') as Map<String, dynamic>);
+
+  /// Returns what the relay stored, so the page shows the saved state rather
+  /// than assuming the write landed exactly as sent.
+  Future<AlertSettings> saveSettings(AlertSettings value) async =>
+      AlertSettings.fromJson(await _send('PUT', '/settings', body: value.toJson())
+          as Map<String, dynamic>);
+
   Future<dynamic> _send(
     String method,
     String path, {
@@ -140,12 +169,17 @@ class VigiWatchApi {
     final uri = Uri.parse('$baseUrl$path');
     late final http.Response res;
     try {
-      res = await (method == 'POST'
-              ? _client.post(uri, headers: _headers, body: jsonEncode(body))
-              : _client.get(uri, headers: _headers))
-          // A phone on bad mobile data should give up and say so rather than
-          // leave the page spinning; the detector posts every second anyway.
-          .timeout(const Duration(seconds: 10));
+      final Future<http.Response> call;
+      if (method == 'POST') {
+        call = _client.post(uri, headers: _headers, body: jsonEncode(body));
+      } else if (method == 'PUT') {
+        call = _client.put(uri, headers: _headers, body: jsonEncode(body));
+      } else {
+        call = _client.get(uri, headers: _headers);
+      }
+      // A phone on bad mobile data should give up and say so rather than
+      // leave the page spinning; the detector posts every second anyway.
+      res = await call.timeout(const Duration(seconds: 10));
     } on TimeoutException {
       throw ApiException('The relay did not answer in time.');
     } catch (_) {

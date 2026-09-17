@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'api.dart';
 import 'settings_store.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatefulWidget {
+  final VigiWatchApi api;
   final VoidCallback onLogout;
-  const SettingsPage({super.key, required this.onLogout});
+  const SettingsPage({super.key, required this.api, required this.onLogout});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -13,6 +15,10 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final store = SettingsStore();
+
+  /// Why the switches might not match what the detector is running. Null when
+  /// the last exchange with the relay worked.
+  String? syncError;
 
   // Seeded from the store's defaults so the page renders before the saved
   // values come back off disk.
@@ -32,6 +38,23 @@ class _SettingsPageState extends State<SettingsPage> {
       name.text = store.emergencyName;
       number.text = store.emergencyNumber;
     });
+
+    // The relay holds the switches, because that is where the detector reads
+    // them from. This phone's cache is only what we show until the real values
+    // arrive -- a reinstall, or a second phone, would otherwise display its own
+    // defaults and push them over the top on the next save.
+    try {
+      final remote = await widget.api.settings();
+      if (!mounted) return;
+      setState(() {
+        store.voiceAlertOn = remote.voiceAlertOn;
+        store.buzzerOn = remote.buzzerOn;
+        syncError = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => syncError = e.message);
+    }
   }
 
   @override
@@ -45,10 +68,32 @@ class _SettingsPageState extends State<SettingsPage> {
     store.emergencyName = name.text;
     store.emergencyNumber = number.text;
     await store.save();
+
+    // Local first, so a relay that cannot be reached still leaves the driver's
+    // choice on this screen instead of snapping back on the next rebuild.
+    var message = 'Settings saved';
+    try {
+      final stored = await widget.api.saveSettings(AlertSettings(
+        buzzerOn: store.buzzerOn,
+        voiceAlertOn: store.voiceAlertOn,
+      ));
+      if (!mounted) return;
+      setState(() {
+        store.voiceAlertOn = stored.voiceAlertOn;
+        store.buzzerOn = stored.buzzerOn;
+        syncError = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => syncError = e.message);
+      // Named plainly: a driver who thinks they armed the buzzer and did not
+      // is worse off than one who knows the save only got as far as the phone.
+      message = 'Saved on this phone only - the detector was not reached.';
+    }
+
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Settings saved')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -87,10 +132,13 @@ class _SettingsPageState extends State<SettingsPage> {
           onChanged: (v) => setState(() => store.buzzerOn = v),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Saved on this phone. The detector still reads its own settings '
-          'from the laptop.',
-          style: TextStyle(fontSize: 12, color: muted),
+        Text(
+          syncError == null
+              ? 'These reach the detector within a few seconds of saving. The '
+                  'emergency contact above stays on this phone.'
+              : 'Not synced with the detector: $syncError',
+          style: TextStyle(
+              fontSize: 12, color: syncError == null ? muted : red),
         ),
         const SizedBox(height: 28),
         FilledButton(onPressed: save, child: const Text('Save')),

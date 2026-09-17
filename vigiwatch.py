@@ -1,9 +1,12 @@
 # VigiWatch - Driver Drowsiness Detection (PERCLOS edition)
 #
 # WHAT CHANGED FROM THE OLD VERSION
-#   * All Arduino / pyserial / buzzer code removed.
 #   * Drowsiness is now scored with PERCLOS (P80) instead of a raw EAR
 #     threshold plus a consecutive-frame counter.
+#   * The Arduino buzzer and LED are back, but optional this time. The board is
+#     found by scanning at startup and the detector runs fine without one, so a
+#     missing Nano costs you the hardware alert and nothing else. The phone
+#     app's Buzzer switch reaches it through the relay.
 #
 # WHY PERCLOS IS MORE ACCURATE THAN A BARE EAR THRESHOLD
 #   EAR is still the raw signal -- PERCLOS is built on top of it. What changes
@@ -23,6 +26,8 @@
 #   30 s window, so blinks no longer register as drowsiness.
 #
 #   Run:  python vigiwatch.py --webcam 0
+#         python vigiwatch.py --no-arduino     (on-screen alerts only)
+#         python vigiwatch.py --arduino-port COM5
 #   Keys: q = quit, c = recalibrate
 
 import argparse
@@ -30,7 +35,7 @@ import os
 import time
 from collections import deque
 from datetime import datetime, timedelta
-from threading import Thread
+from threading import Lock, Thread
 
 import cv2
 import dlib
@@ -47,6 +52,15 @@ try:
     import requests
 except ImportError:
     requests = None
+
+try:
+    import serial
+    import serial.tools.list_ports
+except ImportError:
+    # Optional on purpose. The buzzer is a bonus on top of the on-screen and
+    # spoken alerts, so a machine without pyserial should still run the
+    # detector rather than refuse to start.
+    serial = None
 
 try:
     from dotenv import load_dotenv
@@ -111,6 +125,15 @@ if API_URL and not API_URL.startswith(("http://", "https://")):
     API_URL = "https://" + API_URL
 
 STATUS_EVERY = 1.0        # seconds between heartbeats to the relay
+SETTINGS_EVERY = 5.0      # seconds between reads of the app's alert switches.
+                          # Slower than the heartbeat because nobody flips a
+                          # switch twice a second, and every poll is a request
+                          # the free Railway tier has to serve.
+
+# Arduino (vigiwatch.ino: buzzer on D2, LED on D4)
+ARDUINO_BAUD = 9600
+ARDUINO_KEYWORDS = ("ARDUINO", "CH340", "CH341", "CP210", "FT232",
+                    "USB-SERIAL", "USB SERIAL")
 
 
 # ------------------------------------------------------------ file paths ----
@@ -324,7 +347,7 @@ def draw_text(img, text, x, y, scale=0.6, colour=(235, 235, 235), thickness=1,
 
 
 def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
-             ear, openness, mouth_opening, fps):
+             ear, openness, mouth_opening, fps, arduino_ok=None):
     """Status down the left edge, live numbers down the right edge."""
     h, w = img.shape[:2]
     left = HUD_MARGIN
@@ -366,6 +389,15 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
         y += 28
 
     draw_text(img, "q quit    c recalibrate", left, h - HUD_MARGIN, 0.5, (170, 170, 170))
+
+    # Bottom right, opposite the key hints: whether the buzzer and LED can
+    # actually be reached. Amber rather than red when it is missing -- a board
+    # that is not there degrades the alert, it is not an alarm in itself.
+    # None means --no-arduino, so there is nothing to report.
+    if arduino_ok is not None:
+        draw_text(img, "Arduino: {}".format("connected" if arduino_ok else "no board"),
+                  right, h - HUD_MARGIN, 0.5,
+                  (140, 220, 140) if arduino_ok else (0, 165, 255), align="right")
 
 
 # --------------------------------------------------------------- alerts -----
@@ -423,10 +455,239 @@ def report_status(state, score):
     _post("/status", {"state": state, "perclos": round(score, 4)})
 
 
+# --------------------------------------------------------- app settings -----
+# The switches on the phone's Settings page. Seeded with everything on, so a
+# detector that has never reached the relay still gives the driver every alert
+# it can -- failing quiet would be the wrong way round for a safety feature.
+_settings_lock = Lock()
+_settings = {"buzzer_on": True, "voice_alert_on": True}
+
+
+def setting(name):
+    """Read one switch. Cheap enough to call from the frame loop."""
+    with _settings_lock:
+        return _settings.get(name, True)
+
+
+def _poll_settings():
+    """Keep the local copy of the switches fresh, forever.
+
+    On its own thread: a request to a relay that has gone away takes seconds to
+    time out, and the frame loop cannot afford to wait on that. A failed poll is
+    ignored rather than reset to defaults, so a wifi blip does not flip the
+    driver's choices back on behind their back.
+    """
+    global _settings
+    while True:
+        try:
+            res = requests.get(API_URL + "/settings",
+                               headers={"X-API-Key": API_KEY}, timeout=4)
+            if res.status_code == 200:
+                body = res.json()
+                fresh = {"buzzer_on": bool(body.get("buzzer_on", True)),
+                         "voice_alert_on": bool(body.get("voice_alert_on", True))}
+                with _settings_lock:
+                    # Replaced wholesale rather than updated key by key, so the
+                    # frame loop can never read a half-applied pair.
+                    _settings = fresh
+        except Exception:
+            pass        # last known good values stay in force
+        time.sleep(SETTINGS_EVERY)
+
+
+def start_settings_poll():
+    if not API_URL or requests is None:
+        return          # nothing to poll; the defaults above stand
+    Thread(target=_poll_settings, daemon=True).start()
+
+
+# -------------------------------------------------------------- arduino -----
+# The board runs vigiwatch.ino: buzzer on D2, LED on D4, 9600 baud, one
+# newline-terminated command per line -- BUZZ, BUZZOFF, LEDON, LEDOFF, OFF and
+# PING. Ported from sdsd.py, the pre-PERCLOS version, which is where this code
+# earned each of its comments.
+#
+# Writes are locked because the buzzer fires from its own thread while the main
+# loop drives the LED, and two interleaved writes reach the board as one
+# unparseable line.
+_serial_lock = Lock()
+_ser = None
+_led_on = False           # mirrors the board, so we only write on a change
+_reconnecting = False     # one rescan at a time, not one per failed write
+
+
+def open_arduino(port, baudrate=ARDUINO_BAUD):
+    """Open a port and make whoever answers identify itself.
+
+    Windows lists its Bluetooth COM ports right next to the Nano and those open
+    perfectly well, so without the PING check VigiWatch would report itself
+    connected to a port that never reaches the buzzer.
+    """
+    s = None
+    try:
+        print("Arduino: trying {}...".format(port))
+        s = serial.Serial(port, baudrate, timeout=1)
+        time.sleep(2.0)             # opening the port resets the board
+        s.reset_input_buffer()
+        # Ask more than once. A Nano still finishing its bootloader swallows the
+        # first line, and one missed reply would write the real board off.
+        for _ in range(3):          # readline blocks up to 1 s per try
+            s.write(b"PING\n")
+            s.flush()
+            if s.readline().decode(errors="ignore").strip() == "VIGIWATCH":
+                return s
+        print("Arduino: {} did not answer PING - not the VigiWatch board"
+              .format(port))
+    except Exception as exc:
+        print("Arduino: {} failed: {}".format(port, exc))
+
+    # Every path that did not return has to hand the port back, or it stays
+    # locked against the next attempt.
+    if s is not None:
+        try:
+            s.close()
+        except Exception:
+            pass
+    return None
+
+
+def connect_arduino(preferred=""):
+    """Find the board and keep it. Returns True if one answered."""
+    global _ser, _led_on
+
+    if serial is None:
+        print("Arduino: pyserial not installed (pip install pyserial) - "
+              "buzzer and LED disabled")
+        return False
+
+    if preferred:
+        candidates = [preferred]
+    else:
+        ports = list(serial.tools.list_ports.comports())
+        if not ports:
+            print("Arduino: no serial ports found - buzzer and LED disabled")
+            return False
+        # Ports that name a USB-serial chip first. Bluetooth is never the Nano
+        # and each wasted probe costs about three seconds of startup.
+        named = [p.device for p in ports
+                 if any(k in p.description.upper() for k in ARDUINO_KEYWORDS)]
+        candidates = named + [p.device for p in ports
+                              if p.device not in named
+                              and "BLUETOOTH" not in p.description.upper()]
+
+    for port in candidates:
+        found = open_arduino(port)
+        if found is not None:
+            with _serial_lock:
+                _ser = found
+                # That open just reset the board, so its LED is off again. The
+                # mirror has to agree, or set_led(True) sees no change and the
+                # LED never lights again for the rest of the run.
+                _led_on = False
+            print("Arduino: connected on {}".format(port))
+            return True
+
+    print("Arduino: no board answered. Check the USB cable, close the Arduino "
+          "IDE, and make sure vigiwatch.ino is the sketch on the board.")
+    return False
+
+
+def arduino_connected():
+    with _serial_lock:
+        return _ser is not None and _ser.is_open
+
+
+def _reconnect_async():
+    """Rescan without stalling whoever noticed the board was gone."""
+    global _reconnecting
+    try:
+        connect_arduino()
+    finally:
+        with _serial_lock:
+            _reconnecting = False
+
+
+def send_arduino(cmd):
+    """Send one command. Returns True if it went out."""
+    global _ser, _reconnecting
+
+    with _serial_lock:
+        if _ser is None or not _ser.is_open:
+            return False
+        try:
+            _ser.write(cmd.encode() + b"\n")
+            _ser.flush()
+            return True
+        except Exception as exc:
+            print("Arduino: '{}' failed: {}".format(cmd, exc))
+            try:
+                _ser.close()
+            except Exception:
+                pass
+            _ser = None
+
+    # The cable came out mid-run. Rescan off the main thread: probing a port
+    # costs seconds each and there is still a video feed to draw.
+    with _serial_lock:
+        if _reconnecting:
+            return False
+        _reconnecting = True
+    print("Arduino: reconnecting...")
+    Thread(target=_reconnect_async, daemon=True).start()
+    return False
+
+
+def trigger_buzzer():
+    """Sound the buzzer. Call from a thread so serial lag never stalls a frame.
+
+    The sketch stops itself after its own 10-second timer, so even a crash on
+    this side cannot leave the buzzer latched on -- which is exactly what the
+    old board used to do.
+    """
+    if send_arduino("BUZZ"):
+        print("Buzzer on (the sketch stops it after 10 s)")
+
+
+def stop_buzzer():
+    """Cut the buzzer early, before the sketch's own timer runs out."""
+    send_arduino("BUZZOFF")
+
+
+def set_led(on):
+    """Drive the LED, lit for as long as the driver reads as drowsy.
+
+    Edge-triggered: the frame loop calls this every frame and 9600 baud will not
+    carry a command per frame.
+    """
+    global _led_on
+    if on == _led_on:
+        return
+    if send_arduino("LEDON" if on else "LEDOFF"):
+        _led_on = on
+
+
+def close_arduino():
+    """Everything off, port released. Nothing stays lit or sounding after quit."""
+    global _ser
+    send_arduino("OFF")
+    with _serial_lock:
+        if _ser is not None:
+            try:
+                _ser.close()
+            except Exception:
+                pass
+            _ser = None
+
+
 # ----------------------------------------------------------------- main -----
 def main():
     ap = argparse.ArgumentParser(description="VigiWatch drowsiness detector (PERCLOS)")
     ap.add_argument("-w", "--webcam", type=int, default=0, help="webcam index")
+    ap.add_argument("--arduino-port", default=os.environ.get("ARDUINO_PORT", ""),
+                    help="serial port of the board, e.g. COM5. Default: scan "
+                         "for it, which costs a few seconds at startup.")
+    ap.add_argument("--no-arduino", action="store_true",
+                    help="skip the board entirely; screen and voice alerts only")
     args = ap.parse_args()
 
     cascade_path = find_file("haarcascade_frontalface_default.xml",
@@ -453,11 +714,19 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     time.sleep(1.0)
 
+    # Hardware and switches. Both are optional and both fail quietly: no board
+    # and no relay just means the alerts stay on this screen.
+    arduino_enabled = not args.no_arduino
+    if arduino_enabled:
+        connect_arduino(args.arduino_port)
+    start_settings_poll()
+
     calib = EyeCalibration()
     perclos = PerclosTracker()
     ear_history = deque(maxlen=EAR_SMOOTH_N)
 
     closed_since = None          # start of the current run of closed frames
+    was_drowsy = False           # previous frame's verdict, for the LED edge
     sleepy_sets = 0
     last_drowsy_alert = 0.0
     last_yawn_alert = 0.0
@@ -539,8 +808,10 @@ def main():
                 elif (now - no_face_start > NO_FACE_TIMEOUT
                       and now - last_no_face_alert >= NO_FACE_TIMEOUT):
                     last_no_face_alert = now
-                    Thread(target=speak, args=("Driver not detected! Stay alert!",),
-                           daemon=True).start()
+                    if setting("voice_alert_on"):
+                        Thread(target=speak,
+                               args=("Driver not detected! Stay alert!",),
+                               daemon=True).start()
 
             # ---------- drowsiness decision ----------
             score = perclos.value()
@@ -560,11 +831,26 @@ def main():
             else:
                 state, colour = "ALERT", (0, 255, 0)
 
-            if state in ("DROWSY", "MICROSLEEP") and now - last_drowsy_alert >= DROWSY_COOLDOWN:
+            # ---------- hardware ----------
+            drowsy_now = state in ("DROWSY", "MICROSLEEP")
+            if arduino_enabled:
+                set_led(drowsy_now)     # edge-triggered inside set_led
+                if was_drowsy and not drowsy_now:
+                    # Eyes open again before the sketch's 10 s timer was up.
+                    # Cut it now rather than make them sit through the rest.
+                    stop_buzzer()
+            was_drowsy = drowsy_now
+
+            if drowsy_now and now - last_drowsy_alert >= DROWSY_COOLDOWN:
                 last_drowsy_alert = now
                 sleepy_sets += 1
-                Thread(target=speak, args=("Wake up! Keep your eyes open!",),
-                       daemon=True).start()
+                if setting("voice_alert_on"):
+                    Thread(target=speak, args=("Wake up! Keep your eyes open!",),
+                           daemon=True).start()
+                if arduino_enabled and setting("buzzer_on"):
+                    # Threaded: a write to a board that has just been unplugged
+                    # blocks, and a stalled frame loop is a stalled detector.
+                    Thread(target=trigger_buzzer, daemon=True).start()
                 if sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0:
                     send_whatsapp(WHATSAPP_NUMBER, "User appears drowsy! Please check.")
 
@@ -577,8 +863,9 @@ def main():
             # ---------- yawn ----------
             if mouth_opening > YAWN_THRESH and now - last_yawn_alert >= YAWN_COOLDOWN:
                 last_yawn_alert = now
-                Thread(target=speak, args=("Stop yawning! Stay focused!",),
-                       daemon=True).start()
+                if setting("voice_alert_on"):
+                    Thread(target=speak, args=("Stop yawning! Stay focused!",),
+                           daemon=True).start()
                 report_event("YAWN", 0.0)
 
             if now - last_status_post >= STATUS_EVERY:
@@ -593,7 +880,8 @@ def main():
                 cv2.drawContours(display, [scaled], -1, (0, 255, 0), 1, cv2.LINE_AA)
 
             draw_hud(display, state, colour, score, coverage, calib,
-                     calib.elapsed(now), ear, openness, mouth_opening, fps)
+                     calib.elapsed(now), ear, openness, mouth_opening, fps,
+                     arduino_connected() if arduino_enabled else None)
 
             cv2.imshow("VigiWatch", display)
             key = cv2.waitKey(1) & 0xFF
@@ -609,6 +897,10 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     finally:
+        # Hardware first: a crash on the way out must not leave the buzzer
+        # sounding with no window left to close.
+        if arduino_enabled:
+            close_arduino()
         cap.release()
         cv2.destroyAllWindows()
         print("VigiWatch terminated")

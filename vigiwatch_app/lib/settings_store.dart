@@ -2,10 +2,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// The driver's own preferences, kept on the phone.
 ///
-/// These do not reach the detector yet -- it reads its emergency number and
-/// alert switches from its own .env on the laptop. Saving here keeps the
-/// choices across restarts; wiring them through needs a /settings endpoint
-/// on the relay and a poll on the detector side.
+/// The emergency contact is local only -- the detector reads its number from
+/// its own .env on the laptop. The two alert switches do reach it, through
+/// PUT /settings on the relay, which the detector polls; what is stored here
+/// is a cache so the page can render before that answers. SettingsPage owns
+/// the syncing, which keeps this class free of the network.
 class SettingsStore {
   static const _kName = 'emergency_name';
   static const _kNumber = 'emergency_number';

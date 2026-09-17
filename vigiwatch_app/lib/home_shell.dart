@@ -168,7 +168,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             error: eventsError,
             onRefresh: _refreshEvents,
           ),
-          SettingsPage(onLogout: logout),
+          SettingsPage(api: widget.api, onLogout: logout),
         ],
       ),
       bottomNavigationBar: NavigationBar(
