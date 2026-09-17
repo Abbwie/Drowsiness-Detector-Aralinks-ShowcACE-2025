@@ -1,3 +1,12 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+
+    // Covers the ways of starting the app that do NOT go through launch.json,
+    // such as the Run CodeLens above main(). Same file, same reasoning: the
+    // path is committed, the values are not.
+    // If a Flutter command ever fails complaining about this flag, deleting
+    // this one line is safe -- launch.json still configures F5.
+    "dart.flutterAdditionalArgs": [
+        "--dart-define-from-file=../.env"
+    ]
 }

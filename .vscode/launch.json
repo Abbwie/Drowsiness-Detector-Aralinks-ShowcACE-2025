@@ -1,0 +1,37 @@
+{
+  // Press F5 (or Run and Debug) and the app starts already configured.
+  //
+  // The relay address and key are read from the repo's .env at launch, so they
+  // never have to be typed into a terminal. Only the PATH to that file appears
+  // here, never the values, which is what makes this safe to commit -- .env
+  // itself is gitignored.
+  //
+  // The path is relative to the Flutter project (vigiwatch_app), not to this
+  // folder, because that is the directory flutter runs from.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "VigiWatch app",
+      "request": "launch",
+      "type": "dart",
+      "program": "vigiwatch_app/lib/main.dart",
+      "args": ["--dart-define-from-file=../.env"]
+    },
+    {
+      "name": "VigiWatch app (Chrome)",
+      "request": "launch",
+      "type": "dart",
+      "program": "vigiwatch_app/lib/main.dart",
+      "deviceId": "chrome",
+      "args": ["--dart-define-from-file=../.env"]
+    },
+    {
+      // Without the defines, to check the "Not configured" screen still shows
+      // rather than the app pointing at nothing and failing later.
+      "name": "VigiWatch app (unconfigured)",
+      "request": "launch",
+      "type": "dart",
+      "program": "vigiwatch_app/lib/main.dart"
+    }
+  ]
+}
