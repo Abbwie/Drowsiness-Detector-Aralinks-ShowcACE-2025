@@ -49,6 +49,14 @@ def write_settings(body: SettingsIn, db: Session = Depends(get_db)):
     row = _row(db)
     row.buzzer_on = body.buzzer_on
     row.voice_alert_on = body.voice_alert_on
+    # Only when sent. See SettingsIn: an older app build does not know about
+    # these, and must not blank a contact it cannot see.
+    if body.notify_contact_on is not None:
+        row.notify_contact_on = body.notify_contact_on
+    if body.contact_name is not None:
+        row.contact_name = body.contact_name.strip()
+    if body.contact_number is not None:
+        row.contact_number = body.contact_number.strip()
     row.updated_at = utcnow()
     db.commit()
     db.refresh(row)

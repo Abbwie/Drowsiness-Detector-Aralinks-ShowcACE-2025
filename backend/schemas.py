@@ -22,6 +22,11 @@ UtcDatetime = Annotated[datetime, AfterValidator(as_utc)]
 # and would raise on Postgres; the detector's longest word is "FATIGUE WARNING".
 Label = Annotated[str, Field(min_length=1, max_length=20)]
 
+# Allowed to be empty, unlike Label: no contact set is the starting state and
+# has to be expressible, not an error.
+ContactName = Annotated[str, Field(max_length=80)]
+ContactNumber = Annotated[str, Field(max_length=40)]
+
 
 class LoginRequest(BaseModel):
     username: str = Field(max_length=100)
@@ -65,10 +70,20 @@ class StatusOut(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    """A full replacement, not a patch -- the app always sends both switches,
-    so there is no way to read one back stale and write it over the other."""
+    """A full replacement for the two switches -- the app always sends both,
+    so there is no way to read one back stale and write it over the other.
+
+    The contact fields are the exception: they are optional, and left alone
+    when omitted. An app build that predates them would otherwise send no
+    contact, and a full replacement would read that as "clear it", wiping a
+    number the driver had saved from a phone that simply had not been
+    rebuilt yet.
+    """
     buzzer_on: bool
     voice_alert_on: bool
+    notify_contact_on: bool | None = None
+    contact_name: ContactName | None = None
+    contact_number: ContactNumber | None = None
 
 
 class SettingsOut(BaseModel):
@@ -76,4 +91,7 @@ class SettingsOut(BaseModel):
 
     buzzer_on: bool
     voice_alert_on: bool
+    notify_contact_on: bool
+    contact_name: str
+    contact_number: str
     updated_at: UtcDatetime

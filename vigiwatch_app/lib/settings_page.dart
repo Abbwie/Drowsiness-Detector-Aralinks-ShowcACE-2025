@@ -59,6 +59,14 @@ class _SettingsPageState extends State<SettingsPage> {
         if (!_touched) {
           store.voiceAlertOn = remote.voiceAlertOn;
           store.buzzerOn = remote.buzzerOn;
+          store.notifyContactOn = remote.notifyContactOn;
+          // The relay is where the contact lives now, so it wins over
+          // whatever this phone last cached -- including on a reinstall, or
+          // on a second phone that has never seen it.
+          store.emergencyName = remote.contactName;
+          store.emergencyNumber = remote.contactNumber;
+          name.text = remote.contactName;
+          number.text = remote.contactNumber;
         }
       });
     } on ApiException catch (e) {
@@ -86,11 +94,21 @@ class _SettingsPageState extends State<SettingsPage> {
       final stored = await widget.api.saveSettings(AlertSettings(
         buzzerOn: store.buzzerOn,
         voiceAlertOn: store.voiceAlertOn,
+        notifyContactOn: store.notifyContactOn,
+        contactName: name.text.trim(),
+        contactNumber: number.text.trim(),
       ));
       if (!mounted) return;
       setState(() {
         store.voiceAlertOn = stored.voiceAlertOn;
         store.buzzerOn = stored.buzzerOn;
+        store.notifyContactOn = stored.notifyContactOn;
+        // Show what the relay kept, not what was typed: trimming happens
+        // there, and the detector will read that version.
+        store.emergencyName = stored.contactName;
+        store.emergencyNumber = stored.contactNumber;
+        name.text = stored.contactName;
+        number.text = stored.contactNumber;
         syncError = null;
         _touched = false;   // relay and page agree again
       });
@@ -115,9 +133,8 @@ class _SettingsPageState extends State<SettingsPage> {
         const Text('Emergency contact', style: TextStyle(fontSize: 16)),
         const SizedBox(height: 4),
         const Text(
-          'Kept on this phone. The detector messages the number it was set '
-          'up with on the laptop, so editing this does not yet change who '
-          'gets told.',
+          'If you keep getting drowsy, the detector messages this person. '
+          'Saved to the relay, so a change here reaches it in a few seconds.',
           style: TextStyle(fontSize: 13, color: muted),
         ),
         const SizedBox(height: 12),
@@ -130,6 +147,21 @@ class _SettingsPageState extends State<SettingsPage> {
           controller: number,
           keyboardType: TextInputType.phone,
           decoration: const InputDecoration(hintText: 'Phone number'),
+        ),
+        const SizedBox(height: 10),
+        _Toggle(
+          label: 'Message this contact',
+          value: store.notifyContactOn,
+          onChanged: (v) => setState(() {
+            store.notifyContactOn = v;
+            _touched = true;
+          }),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Off until you turn it on. Someone else being told where you are '
+          'up to should be your decision, not a default.',
+          style: TextStyle(fontSize: 12, color: muted),
         ),
         const SizedBox(height: 28),
         const Text('Alerts', style: TextStyle(fontSize: 16)),
@@ -153,8 +185,8 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 8),
         Text(
           syncError == null
-              ? 'These reach the detector within a few seconds of saving. The '
-                  'emergency contact above stays on this phone.'
+              ? 'All of these reach the detector within a few seconds of '
+                  'saving.'
               : 'Not synced with the detector: $syncError',
           style: TextStyle(
               fontSize: 12, color: syncError == null ? muted : red),

@@ -11,8 +11,42 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import inspect, text
+
 from database import Base, engine
 from routers import events, login, settings, status
+
+# Columns added to a model after its table already exists. create_all() makes
+# missing tables and nothing else, so on a database that already has a
+# settings row these would never appear, and every read of the table would
+# fail with "column does not exist" -- taking the app down rather than
+# degrading. Checked against the live schema on each boot and skipped when
+# present, which is what makes them safe to leave here permanently.
+_ADDED_COLUMNS = {
+    "settings": {
+        "notify_contact_on": "BOOLEAN DEFAULT FALSE",
+        "contact_name": "VARCHAR(80) DEFAULT \'\'",
+        "contact_number": "VARCHAR(40) DEFAULT \'\'",
+    },
+}
+
+
+def _add_missing_columns():
+    """Bring an existing table up to the shape the models expect."""
+    inspector = inspect(engine)
+    for table, columns in _ADDED_COLUMNS.items():
+        if not inspector.has_table(table):
+            continue            # create_all built it complete already
+        present = {c["name"] for c in inspector.get_columns(table)}
+        for name, ddl in columns.items():
+            if name in present:
+                continue
+            # One transaction each: on Postgres a failed statement poisons the
+            # whole transaction, so a shared one would lose every later column.
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE {} ADD COLUMN {} {}".format(table, name, ddl)))
+            print("migrated: added {}.{}".format(table, name), flush=True)
 
 
 @asynccontextmanager
@@ -23,6 +57,7 @@ async def lifespan(app: FastAPI):
     # return a readable 500.
     try:
         Base.metadata.create_all(engine)
+        _add_missing_columns()
     except Exception as exc:
         print(f"WARNING: could not reach the database: {exc}", flush=True)
     yield

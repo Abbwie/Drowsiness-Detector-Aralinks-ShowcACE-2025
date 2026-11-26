@@ -165,7 +165,6 @@ NO_FACE_TIMEOUT = 20
 YAWN_COOLDOWN = 5
 DROWSY_COOLDOWN = 5
 
-WHATSAPP_NUMBER = "+639670092434"
 WHATSAPP_EVERY_N_ALERTS = 5
 
 # Cloud relay -- the FastAPI service on Railway that the phone app reads from.
@@ -904,13 +903,20 @@ def report_status(state, score):
 # detector that has never reached the relay still gives the driver every alert
 # it can -- failing quiet would be the wrong way round for a safety feature.
 _settings_lock = Lock()
-_settings = {"buzzer_on": True, "voice_alert_on": True}
+_settings = {"buzzer_on": True, "voice_alert_on": True,
+             "notify_contact_on": False, "contact_name": "",
+             "contact_number": ""}
 
 
-def setting(name):
-    """Read one switch. Cheap enough to call from the frame loop."""
+def setting(name, default=True):
+    """Read one setting. Cheap enough to call from the frame loop.
+
+    The default is a parameter because not everything here is a switch that
+    should fail armed. An unreachable relay must not be read as permission to
+    message somebody, and a missing number is "", not True.
+    """
     with _settings_lock:
-        return _settings.get(name, True)
+        return _settings.get(name, default)
 
 
 def _poll_settings():
@@ -928,8 +934,16 @@ def _poll_settings():
                                headers={"X-API-Key": API_KEY}, timeout=4)
             if res.status_code == 200:
                 body = res.json()
-                fresh = {"buzzer_on": bool(body.get("buzzer_on", True)),
-                         "voice_alert_on": bool(body.get("voice_alert_on", True))}
+                fresh = {
+                    "buzzer_on": bool(body.get("buzzer_on", True)),
+                    "voice_alert_on": bool(body.get("voice_alert_on", True)),
+                    # Off unless the relay says otherwise, and empty unless it
+                    # names someone. A relay on an older build sends neither,
+                    # and silence is not consent to message anybody.
+                    "notify_contact_on": bool(body.get("notify_contact_on", False)),
+                    "contact_name": str(body.get("contact_name", "") or ""),
+                    "contact_number": str(body.get("contact_number", "") or ""),
+                }
                 with _settings_lock:
                     # Replaced wholesale rather than updated key by key, so the
                     # frame loop can never read a half-applied pair.
@@ -1478,8 +1492,14 @@ def main():
                     # Threaded: a write to a board that has just been unplugged
                     # blocks, and a stalled frame loop is a stalled detector.
                     Thread(target=trigger_buzzer, daemon=True).start()
-                if sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0:
-                    send_whatsapp(WHATSAPP_NUMBER, "User appears drowsy! Please check.")
+                # The driver's own contact, set in the app, instead of a
+                # number compiled into this file. Both the switch and a number
+                # are required: no number means nobody was ever nominated, and
+                # messaging a stranger is worse than messaging no one.
+                contact = str(setting("contact_number", "")).strip()
+                if (sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0
+                        and setting("notify_contact_on", False) and contact):
+                    send_whatsapp(contact, "User appears drowsy! Please check.")
 
                 # A microsleep has a literal duration. A PERCLOS alert does not,
                 # so report the time the eyes spent shut inside the window --

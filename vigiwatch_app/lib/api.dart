@@ -79,15 +79,42 @@ class AlertSettings {
   final bool buzzerOn;
   final bool voiceAlertOn;
 
-  const AlertSettings({required this.buzzerOn, required this.voiceAlertOn});
+  /// Who to message, and whether to message them at all.
+  ///
+  /// On the relay rather than on this phone because the detector is what
+  /// sends the message, and the detector runs on the laptop -- it has no way
+  /// to read SharedPreferences. Keeping it local was why the app could
+  /// promise to message someone the detector had never heard of.
+  final bool notifyContactOn;
+  final String contactName;
+  final String contactNumber;
+
+  const AlertSettings({
+    required this.buzzerOn,
+    required this.voiceAlertOn,
+    this.notifyContactOn = false,
+    this.contactName = '',
+    this.contactNumber = '',
+  });
 
   factory AlertSettings.fromJson(Map<String, dynamic> json) => AlertSettings(
         buzzerOn: json['buzzer_on'] as bool? ?? true,
         voiceAlertOn: json['voice_alert_on'] as bool? ?? true,
+        // Off and empty when the relay does not send them. A relay on an
+        // older deploy saying nothing is not consent to message anybody --
+        // which is the opposite of how the two switches above default.
+        notifyContactOn: json['notify_contact_on'] as bool? ?? false,
+        contactName: json['contact_name'] as String? ?? '',
+        contactNumber: json['contact_number'] as String? ?? '',
       );
 
-  Map<String, dynamic> toJson() =>
-      {'buzzer_on': buzzerOn, 'voice_alert_on': voiceAlertOn};
+  Map<String, dynamic> toJson() => {
+        'buzzer_on': buzzerOn,
+        'voice_alert_on': voiceAlertOn,
+        'notify_contact_on': notifyContactOn,
+        'contact_name': contactName,
+        'contact_number': contactNumber,
+      };
 }
 
 /// A failure worth showing the driver, already phrased for a snackbar.

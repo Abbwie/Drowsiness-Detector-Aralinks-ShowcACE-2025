@@ -42,4 +42,20 @@ class Settings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     buzzer_on: Mapped[bool] = mapped_column(Boolean, default=True)
     voice_alert_on: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Who to tell, and whether to tell them at all.
+    #
+    # Here rather than on the phone because the detector is what sends the
+    # message and the detector runs on the laptop: a number typed into the app
+    # and left in SharedPreferences could never reach it, which is exactly the
+    # gap this closes. The app used to promise it would message this person
+    # while the detector messaged a number compiled into its source.
+    #
+    # Off by default, unlike the two switches above. They decide whether this
+    # driver gets a louder warning; this one decides whether somebody else is
+    # told where the driver is up to. That is not a default anyone should get
+    # without choosing it.
+    notify_contact_on: Mapped[bool] = mapped_column(Boolean, default=False)
+    contact_name: Mapped[str] = mapped_column(String(80), default="")
+    contact_number: Mapped[str] = mapped_column(String(40), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
