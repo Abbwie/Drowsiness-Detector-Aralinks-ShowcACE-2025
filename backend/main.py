@@ -25,8 +25,11 @@ from routers import events, login, settings, status
 _ADDED_COLUMNS = {
     "settings": {
         "notify_contact_on": "BOOLEAN DEFAULT FALSE",
-        "contact_name": "VARCHAR(80) DEFAULT \'\'",
-        "contact_number": "VARCHAR(40) DEFAULT \'\'",
+        "contact_name": "VARCHAR(80) DEFAULT ''",
+        "contact_number": "VARCHAR(40) DEFAULT ''",
+        "head_drop_ratio": "FLOAT DEFAULT 0.72",
+        "no_face_alert_seconds": "FLOAT DEFAULT 20.0",
+        "no_face_contact_seconds": "FLOAT DEFAULT 30.0",
     },
 }
 

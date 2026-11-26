@@ -60,6 +60,9 @@ class _SettingsPageState extends State<SettingsPage> {
           store.voiceAlertOn = remote.voiceAlertOn;
           store.buzzerOn = remote.buzzerOn;
           store.notifyContactOn = remote.notifyContactOn;
+          store.headDropRatio = remote.headDropRatio;
+          store.noFaceAlertSeconds = remote.noFaceAlertSeconds;
+          store.noFaceContactSeconds = remote.noFaceContactSeconds;
           // The relay is where the contact lives now, so it wins over
           // whatever this phone last cached -- including on a reinstall, or
           // on a second phone that has never seen it.
@@ -97,12 +100,18 @@ class _SettingsPageState extends State<SettingsPage> {
         notifyContactOn: store.notifyContactOn,
         contactName: name.text.trim(),
         contactNumber: number.text.trim(),
+        headDropRatio: store.headDropRatio,
+        noFaceAlertSeconds: store.noFaceAlertSeconds,
+        noFaceContactSeconds: store.noFaceContactSeconds,
       ));
       if (!mounted) return;
       setState(() {
         store.voiceAlertOn = stored.voiceAlertOn;
         store.buzzerOn = stored.buzzerOn;
         store.notifyContactOn = stored.notifyContactOn;
+        store.headDropRatio = stored.headDropRatio;
+        store.noFaceAlertSeconds = stored.noFaceAlertSeconds;
+        store.noFaceContactSeconds = stored.noFaceContactSeconds;
         // Show what the relay kept, not what was typed: trimming happens
         // there, and the detector will read that version.
         store.emergencyName = stored.contactName;
@@ -192,6 +201,55 @@ class _SettingsPageState extends State<SettingsPage> {
               fontSize: 12, color: syncError == null ? muted : red),
         ),
         const SizedBox(height: 28),
+        const Text('Detection', style: TextStyle(fontSize: 16)),
+        const SizedBox(height: 4),
+        const Text(
+          'Where the camera sits changes what a nod looks like, so these are '
+          'worth tuning per setup rather than left at one number.',
+          style: TextStyle(fontSize: 13, color: muted),
+        ),
+        const SizedBox(height: 12),
+        _Slider(
+          label: 'Head-drop sensitivity',
+          detail: 'Higher reacts to a smaller nod. Lower it if it calls '
+              'head down while you are sitting normally.',
+          value: store.headDropRatio,
+          min: 0.50,
+          max: 0.95,
+          divisions: 9,
+          format: (v) => '${(v * 100).round()}%',
+          onChanged: (v) => setState(() {
+            store.headDropRatio = v;
+            _touched = true;
+          }),
+        ),
+        _Slider(
+          label: 'Alert if no face for',
+          detail: 'Voice and buzzer, repeating until you are back in frame.',
+          value: store.noFaceAlertSeconds,
+          min: 5,
+          max: 120,
+          divisions: 23,
+          format: (v) => '${v.round()}s',
+          onChanged: (v) => setState(() {
+            store.noFaceAlertSeconds = v;
+            _touched = true;
+          }),
+        ),
+        _Slider(
+          label: 'Then message your contact after',
+          detail: 'Once per absence, and only if the switch above is on.',
+          value: store.noFaceContactSeconds,
+          min: 10,
+          max: 300,
+          divisions: 29,
+          format: (v) => '${v.round()}s',
+          onChanged: (v) => setState(() {
+            store.noFaceContactSeconds = v;
+            _touched = true;
+          }),
+        ),
+        const SizedBox(height: 28),
         const Text('About', style: TextStyle(fontSize: 16)),
         const SizedBox(height: 12),
         _LinkRow(
@@ -215,6 +273,67 @@ class _SettingsPageState extends State<SettingsPage> {
           child: const Text('Logout'),
         ),
       ],
+    );
+  }
+}
+
+class _Slider extends StatelessWidget {
+  final String label;
+  final String detail;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String Function(double) format;
+  final ValueChanged<double> onChanged;
+
+  const _Slider({
+    required this.label,
+    required this.detail,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.format,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Clamped before it reaches the Slider: a value from an older relay, or
+    // one edited by hand, outside the range throws rather than displaying.
+    final v = value.clamp(min, max);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                  child: Text(label, style: const TextStyle(fontSize: 14))),
+              Text(format(v),
+                  style: const TextStyle(fontSize: 14, color: red)),
+            ],
+          ),
+          Text(detail,
+              style: const TextStyle(fontSize: 11, color: muted, height: 1.4)),
+          Slider(
+            value: v,
+            min: min,
+            max: max,
+            divisions: divisions,
+            activeColor: red,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
     );
   }
 }

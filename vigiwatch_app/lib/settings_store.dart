@@ -14,6 +14,9 @@ class SettingsStore {
   static const _kVoice = 'voice_alert_on';
   static const _kBuzzer = 'buzzer_on';
   static const _kNotify = 'notify_contact_on';
+  static const _kDrop = 'head_drop_ratio';
+  static const _kNoFace = 'no_face_alert_seconds';
+  static const _kNoFaceContact = 'no_face_contact_seconds';
   static const _kDriver = 'driver_name';
 
   // Blank, not a real number. A default that dials a real person is one
@@ -23,6 +26,9 @@ class SettingsStore {
   bool voiceAlertOn = true;
   bool buzzerOn = false;
   bool notifyContactOn = false;
+  double headDropRatio = 0.72;
+  double noFaceAlertSeconds = 20;
+  double noFaceContactSeconds = 30;
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
@@ -31,6 +37,10 @@ class SettingsStore {
     voiceAlertOn = p.getBool(_kVoice) ?? voiceAlertOn;
     buzzerOn = p.getBool(_kBuzzer) ?? buzzerOn;
     notifyContactOn = p.getBool(_kNotify) ?? notifyContactOn;
+    headDropRatio = p.getDouble(_kDrop) ?? headDropRatio;
+    noFaceAlertSeconds = p.getDouble(_kNoFace) ?? noFaceAlertSeconds;
+    noFaceContactSeconds =
+        p.getDouble(_kNoFaceContact) ?? noFaceContactSeconds;
   }
 
   Future<void> save() async {
@@ -40,6 +50,9 @@ class SettingsStore {
     await p.setBool(_kVoice, voiceAlertOn);
     await p.setBool(_kBuzzer, buzzerOn);
     await p.setBool(_kNotify, notifyContactOn);
+    await p.setDouble(_kDrop, headDropRatio);
+    await p.setDouble(_kNoFace, noFaceAlertSeconds);
+    await p.setDouble(_kNoFaceContact, noFaceContactSeconds);
   }
 
   /// Remembering the name lets the home page greet the driver before the

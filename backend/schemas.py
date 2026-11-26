@@ -27,6 +27,13 @@ Label = Annotated[str, Field(min_length=1, max_length=20)]
 ContactName = Annotated[str, Field(max_length=80)]
 ContactNumber = Annotated[str, Field(max_length=40)]
 
+# Bounded here as well as on the app's sliders. The sliders cannot send
+# anything silly, but the relay answers to a key and a curl, and a
+# zero-second no-face timer would turn a blink into an emergency call.
+DropRatio = Annotated[float, Field(ge=0.50, le=0.95)]
+AlertSeconds = Annotated[float, Field(ge=5.0, le=120.0)]
+ContactSeconds = Annotated[float, Field(ge=10.0, le=300.0)]
+
 
 class LoginRequest(BaseModel):
     username: str = Field(max_length=100)
@@ -84,6 +91,9 @@ class SettingsIn(BaseModel):
     notify_contact_on: bool | None = None
     contact_name: ContactName | None = None
     contact_number: ContactNumber | None = None
+    head_drop_ratio: DropRatio | None = None
+    no_face_alert_seconds: AlertSeconds | None = None
+    no_face_contact_seconds: ContactSeconds | None = None
 
 
 class SettingsOut(BaseModel):
@@ -94,4 +104,7 @@ class SettingsOut(BaseModel):
     notify_contact_on: bool
     contact_name: str
     contact_number: str
+    head_drop_ratio: float
+    no_face_alert_seconds: float
+    no_face_contact_seconds: float
     updated_at: UtcDatetime

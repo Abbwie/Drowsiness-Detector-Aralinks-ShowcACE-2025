@@ -62,6 +62,12 @@ def write_settings(body: SettingsIn, db: Session = Depends(get_db)):
         # value back, the settings page shows the corrected number instead
         # of the one that was typed.
         row.contact_number = normalise_phone(body.contact_number)
+    if body.head_drop_ratio is not None:
+        row.head_drop_ratio = body.head_drop_ratio
+    if body.no_face_alert_seconds is not None:
+        row.no_face_alert_seconds = body.no_face_alert_seconds
+    if body.no_face_contact_seconds is not None:
+        row.no_face_contact_seconds = body.no_face_contact_seconds
     row.updated_at = utcnow()
     db.commit()
     db.refresh(row)

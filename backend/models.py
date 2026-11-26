@@ -58,4 +58,15 @@ class Settings(Base):
     notify_contact_on: Mapped[bool] = mapped_column(Boolean, default=False)
     contact_name: Mapped[str] = mapped_column(String(80), default="")
     contact_number: Mapped[str] = mapped_column(String(40), default="")
+
+    # Tuning the driver can reach without editing the detector's source.
+    #
+    # head_drop_ratio especially: a webcam on top of a monitor and one clipped
+    # to a dashboard do not want the same number, because the baseline it is
+    # measured against depends on where the lens sits relative to the eyes.
+    # Leaving it compiled in meant a false alarm every few seconds was only
+    # fixable by someone willing to edit Python.
+    head_drop_ratio: Mapped[float] = mapped_column(Float, default=0.72)
+    no_face_alert_seconds: Mapped[float] = mapped_column(Float, default=20.0)
+    no_face_contact_seconds: Mapped[float] = mapped_column(Float, default=30.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

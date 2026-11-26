@@ -89,12 +89,26 @@ class AlertSettings {
   final String contactName;
   final String contactNumber;
 
+  /// Detection tuning, kept on the relay for the same reason as the rest:
+  /// the detector is what acts on it, and the detector is not this phone.
+  ///
+  /// headDropRatio is the fraction of the driver's own upright posture that
+  /// still counts as head-up. Higher reacts to a smaller nod. It is worth a
+  /// control rather than a constant because the right value depends on where
+  /// the camera sits relative to the eyes, which differs per car and per rig.
+  final double headDropRatio;
+  final double noFaceAlertSeconds;
+  final double noFaceContactSeconds;
+
   const AlertSettings({
     required this.buzzerOn,
     required this.voiceAlertOn,
     this.notifyContactOn = false,
     this.contactName = '',
     this.contactNumber = '',
+    this.headDropRatio = 0.72,
+    this.noFaceAlertSeconds = 20,
+    this.noFaceContactSeconds = 30,
   });
 
   factory AlertSettings.fromJson(Map<String, dynamic> json) => AlertSettings(
@@ -106,6 +120,11 @@ class AlertSettings {
         notifyContactOn: json['notify_contact_on'] as bool? ?? false,
         contactName: json['contact_name'] as String? ?? '',
         contactNumber: json['contact_number'] as String? ?? '',
+        headDropRatio: (json['head_drop_ratio'] as num?)?.toDouble() ?? 0.72,
+        noFaceAlertSeconds:
+            (json['no_face_alert_seconds'] as num?)?.toDouble() ?? 20,
+        noFaceContactSeconds:
+            (json['no_face_contact_seconds'] as num?)?.toDouble() ?? 30,
       );
 
   Map<String, dynamic> toJson() => {
@@ -114,6 +133,9 @@ class AlertSettings {
         'notify_contact_on': notifyContactOn,
         'contact_name': contactName,
         'contact_number': contactNumber,
+        'head_drop_ratio': headDropRatio,
+        'no_face_alert_seconds': noFaceAlertSeconds,
+        'no_face_contact_seconds': noFaceContactSeconds,
       };
 }
 

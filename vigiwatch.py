@@ -128,9 +128,22 @@ MICROSLEEP_SECONDS = 1.0  # was 1.5. A long blink is 300-400 ms, so a full
 # take the face out of frame, which reset the closure timer and left the
 # no-face path to mention it twenty seconds later. The eyes are the better
 # signal while they are visible; this covers the moment they are not.
-HEAD_DROP_RATIO = 0.80    # fraction of the calibrated upright nose-to-eye-line
+HEAD_DROP_RATIO = 0.72    # fraction of the calibrated upright nose-to-eye-line
                           # distance that counts as a dropped head. Pitching
                           # down foreshortens the face, so the distance closes.
+                          #
+                          # Was 0.80, which cried constantly. The cause was
+                          # not the number so much as what it was measured
+                          # against: calibrating while looking AT the camera
+                          # banks a head tilted towards it, and if the camera
+                          # sits above eye level that tilt is upward. Every
+                          # glance back at the screen afterwards then reads as
+                          # a drop. The prompt now asks for normal sitting
+                          # posture instead, and this leaves headroom for the
+                          # difference between looking at a screen and looking
+                          # at a lens. Adjustable from the app -- a webcam on
+                          # top of a monitor and one clipped to a dashboard do
+                          # not need the same number.
 HEAD_DROP_SECONDS = 0.8   # held this long before it counts. A glance at the
                           # dashboard or down at the gearstick is shorter.
 HEAD_DROP_GRACE = 1.5     # once the face is lost, how long a head that was
@@ -161,7 +174,22 @@ EAR_SMOOTH_N = 3          # median filter length, kills landmark jitter
 
 # Yawn / no-face (unchanged behaviour from the old version)
 YAWN_THRESH = 35
-NO_FACE_TIMEOUT = 20
+NO_FACE_TIMEOUT = 20      # seconds of no face before the first alert. Both
+                          # rungs below are adjustable from the app.
+NO_FACE_CONTACT_AFTER = 30.0
+                          # and this many seconds AFTER that before the
+                          # emergency contact is messaged.
+                          #
+                          # A ladder rather than one alarm, because the three
+                          # reasons a face disappears want different answers.
+                          # Leaning out of frame wants nothing. Having fallen
+                          # asleep wants a noise loud enough to wake someone,
+                          # which a spoken sentence is not -- that is why the
+                          # buzzer sounds on the first rung now. Being
+                          # unconscious wants another person, because by then
+                          # nothing this detector can do to the driver has
+                          # worked, and continuing to shout at an empty seat
+                          # is not a safety feature.
 YAWN_COOLDOWN = 5
 DROWSY_COOLDOWN = 5
 
@@ -376,6 +404,10 @@ class HeadTracker:
 
     def __init__(self):
         self.reset()
+        # Overwritten from the relay each frame. Kept as an attribute rather
+        # than read from the setting in here, so the class stays testable
+        # without a network and the default still applies when there is none.
+        self.ratio_threshold = HEAD_DROP_RATIO
 
     def reset(self):
         self.baseline = None
@@ -409,7 +441,7 @@ class HeadTracker:
         self.ratio = _pitch_ratio(shape)
         if self.baseline is None or self.ratio is None:
             return False
-        if self.ratio < self.baseline * HEAD_DROP_RATIO:
+        if self.ratio < self.baseline * self.ratio_threshold:
             if self.down_since is None:
                 self.down_since = now
             self.last_down_seen = now
@@ -936,7 +968,18 @@ def report_status(state, score):
 _settings_lock = Lock()
 _settings = {"buzzer_on": True, "voice_alert_on": True,
              "notify_contact_on": False, "contact_name": "",
-             "contact_number": ""}
+             "contact_number": "",
+             "head_drop_ratio": HEAD_DROP_RATIO,
+             "no_face_alert_seconds": float(NO_FACE_TIMEOUT),
+             "no_face_contact_seconds": NO_FACE_CONTACT_AFTER}
+
+
+def _clamp(value, low, high, fallback):
+    """A number from the relay, held inside a range it cannot do harm in."""
+    try:
+        return max(low, min(high, float(value)))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def setting(name, default=True):
@@ -974,6 +1017,18 @@ def _poll_settings():
                     "notify_contact_on": bool(body.get("notify_contact_on", False)),
                     "contact_name": str(body.get("contact_name", "") or ""),
                     "contact_number": str(body.get("contact_number", "") or ""),
+                    # Clamped on the way in. The app's sliders cannot send
+                    # anything silly, but the relay is reachable with a key
+                    # and a curl, and a zero-second no-face timer would turn
+                    # a blink into an emergency call.
+                    "head_drop_ratio": _clamp(
+                        body.get("head_drop_ratio"), 0.50, 0.95, HEAD_DROP_RATIO),
+                    "no_face_alert_seconds": _clamp(
+                        body.get("no_face_alert_seconds"), 5.0, 120.0,
+                        float(NO_FACE_TIMEOUT)),
+                    "no_face_contact_seconds": _clamp(
+                        body.get("no_face_contact_seconds"), 10.0, 300.0,
+                        NO_FACE_CONTACT_AFTER),
                 }
                 with _settings_lock:
                     # Replaced wholesale rather than updated key by key, so the
@@ -1316,6 +1371,7 @@ def main():
     last_no_face_alert = long_ago
     last_status_post = long_ago
     no_face_start = None
+    no_face_contacted = False    # the contact is told once per absence
     fps = 0.0
     last_frame_time = 0.0 if src_fps is not None else time.time()
 
@@ -1333,7 +1389,10 @@ def main():
 
     cv2.namedWindow("Sentra", cv2.WINDOW_NORMAL)
     print("\n  Sentra - Keeps You in Sight\n")
-    print("Look at the camera with your eyes open normally.")
+    # Not "look at the camera". The eye measurement does not care where the
+    # driver looks, but the head baseline does: a lens above eye level banks
+    # an upward tilt, and every glance back at the road reads as a nod.
+    print("Sit how you normally sit, looking where you normally look.")
     print("Calibrating for {:.0f} seconds...  (q = quit, c = recalibrate{})"
           .format(CALIB_SECONDS, ", s = silence buzzer" if arduino_enabled else ""))
 
@@ -1366,6 +1425,8 @@ def main():
             # The tracker equalises its own copy for detection. The landmark
             # predictor is more accurate on the untouched image, so it gets
             # this one.
+            head.ratio_threshold = float(setting("head_drop_ratio",
+                                                 HEAD_DROP_RATIO))
             rect = tracker.find(gray, now)
 
             ear = None
@@ -1377,6 +1438,7 @@ def main():
 
             if rect is not None:
                 no_face_start = None
+                no_face_contacted = False
                 shape = face_utils.shape_to_np(predictor(gray, rect))
 
                 raw_ear, left_eye, right_eye = compute_ear(shape)
@@ -1424,13 +1486,45 @@ def main():
                 head_down = head_drop_enabled and head.update_no_face(now)
                 if no_face_start is None:
                     no_face_start = now
-                elif (now - no_face_start > NO_FACE_TIMEOUT
-                      and now - last_no_face_alert >= NO_FACE_TIMEOUT):
-                    last_no_face_alert = now
-                    if setting("voice_alert_on"):
-                        Thread(target=speak,
-                               args=("Driver not detected! Stay alert!",),
-                               daemon=True).start()
+                else:
+                    gone_for = now - no_face_start
+                    alert_after = float(setting("no_face_alert_seconds",
+                                                float(NO_FACE_TIMEOUT)))
+
+                    # First rung: say it, and sound it. An empty seat used to
+                    # get a spoken sentence and nothing else, which is the one
+                    # alert a driver who has fallen asleep cannot hear.
+                    if (gone_for > alert_after
+                            and now - last_no_face_alert >= alert_after):
+                        last_no_face_alert = now
+                        if setting("voice_alert_on"):
+                            Thread(target=speak,
+                                   args=("Driver not detected! Stay alert!",),
+                                   daemon=True).start()
+                        if (arduino_enabled and setting("buzzer_on")
+                                and not buzzer_muted):
+                            # Not gated on BUZZ_COOLDOWN: this rung has its own
+                            # cadence already, and the cooldown exists to stop
+                            # a flickering drowsy verdict machine-gunning the
+                            # buzzer, which is not what is happening here.
+                            last_buzz = now
+                            Thread(target=trigger_buzzer, daemon=True).start()
+
+                    # Second rung: tell somebody. Once per absence, not once
+                    # per cooldown -- a phone buzzing every thirty seconds is
+                    # how someone learns to ignore it.
+                    contact_after = alert_after + float(setting(
+                        "no_face_contact_seconds", NO_FACE_CONTACT_AFTER))
+                    if (not no_face_contacted and gone_for > contact_after
+                            and setting("notify_contact_on", False)):
+                        no_face_contacted = True
+                        contact = normalise_phone(setting("contact_number", ""))
+                        if contact:
+                            send_whatsapp(contact, (
+                                "Sentra: the driver has not been visible for "
+                                "{:.0f} seconds and is not responding to "
+                                "alerts. Please check on them.").format(gone_for))
+                            report_event("NO FACE", gone_for)
 
             # ---------- drowsiness decision ----------
             score = perclos.value()
@@ -1527,11 +1621,11 @@ def main():
                 # number compiled into this file. Both the switch and a number
                 # are required: no number means nobody was ever nominated, and
                 # messaging a stranger is worse than messaging no one.
-                # Normalised again on this side. The relay does it on the
-                # way in, but a contact saved before that existed is still
-                # sitting there in local form, and this runs on the laptop
-                # while the relay runs on Railway -- separate deploys, so
-                # neither can import the other's copy.
+                # Normalised again on this side. The relay does it on
+                # the way in, but a contact saved before that existed is
+                # still sitting there in local form, and this runs on the
+                # laptop while the relay runs on Railway -- separate
+                # deploys, so neither can import the other's copy.
                 contact = normalise_phone(setting("contact_number", ""))
                 if (sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0
                         and setting("notify_contact_on", False) and contact):
