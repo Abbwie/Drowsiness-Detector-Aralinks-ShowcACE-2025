@@ -852,6 +852,37 @@ def speak(msg):
         print("Text-to-speech not available")
 
 
+def normalise_phone(raw, country_code="63"):
+    """Return `raw` as +<country><subscriber>, or unchanged if unrecognised.
+
+    A driver types their own number the way they say it -- 0967 009 2434 --
+    and WhatsApp needs an international one or the message goes nowhere.
+    Conservative on purpose: a shape this does not recognise is left exactly
+    as typed, because a number silently rewritten into a different real one
+    reaches a stranger who has no idea why.
+
+    Kept in step with backend/phone.py by hand. The two cannot share a module:
+    this runs on the laptop, that one on Railway.
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return text
+    if text.startswith("+"):
+        return "+" + digits
+    if digits.startswith("00"):
+        return "+" + digits[2:]
+    if digits.startswith("0"):
+        return "+" + country_code + digits[1:]
+    if digits.startswith(country_code):
+        return "+" + digits
+    return text
+
+
 def send_whatsapp(phone_number, message):
     if pywhatkit is None:
         print("pywhatkit not installed; skipping WhatsApp")
@@ -1496,7 +1527,12 @@ def main():
                 # number compiled into this file. Both the switch and a number
                 # are required: no number means nobody was ever nominated, and
                 # messaging a stranger is worse than messaging no one.
-                contact = str(setting("contact_number", "")).strip()
+                # Normalised again on this side. The relay does it on the
+                # way in, but a contact saved before that existed is still
+                # sitting there in local form, and this runs on the laptop
+                # while the relay runs on Railway -- separate deploys, so
+                # neither can import the other's copy.
+                contact = normalise_phone(setting("contact_number", ""))
                 if (sleepy_sets % WHATSAPP_EVERY_N_ALERTS == 0
                         and setting("notify_contact_on", False) and contact):
                     send_whatsapp(contact, "User appears drowsy! Please check.")

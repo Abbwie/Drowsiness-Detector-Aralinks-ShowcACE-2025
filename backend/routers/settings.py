@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Settings, utcnow
+from phone import normalise_phone
 from schemas import SettingsIn, SettingsOut
 from security import require_key
 
@@ -56,7 +57,11 @@ def write_settings(body: SettingsIn, db: Session = Depends(get_db)):
     if body.contact_name is not None:
         row.contact_name = body.contact_name.strip()
     if body.contact_number is not None:
-        row.contact_number = body.contact_number.strip()
+        # Normalised here rather than in the app, so it is right whichever
+        # client wrote it -- and because the response carries the stored
+        # value back, the settings page shows the corrected number instead
+        # of the one that was typed.
+        row.contact_number = normalise_phone(body.contact_number)
     row.updated_at = utcnow()
     db.commit()
     db.refresh(row)
