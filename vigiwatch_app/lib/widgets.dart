@@ -42,6 +42,9 @@ String formatDay(DateTime t) {
     'DROWSY' => (label: 'Drowsy', colour: red),
     'MICROSLEEP' => (label: 'Microsleep', colour: red),
     'HEAD DOWN' => (label: 'Head down', colour: red),
+    // Amber, matching the detector. Not monitoring is a warning: the phone
+    // must not show a calm colour for a driver the camera cannot see.
+    'NO FACE' => (label: 'No face visible', colour: amber),
     'CALIBRATING' => (label: 'Calibrating', colour: muted),
     'WARMING UP' => (label: 'Warming up', colour: muted),
     _ => (label: s.state, colour: muted),

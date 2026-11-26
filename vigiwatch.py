@@ -134,9 +134,16 @@ HEAD_DROP_RATIO = 0.80    # fraction of the calibrated upright nose-to-eye-line
 HEAD_DROP_SECONDS = 0.8   # held this long before it counts. A glance at the
                           # dashboard or down at the gearstick is shorter.
 HEAD_DROP_GRACE = 1.5     # once the face is lost, how long a head that was
-                          # already dropping goes on counting as dropped. This
-                          # is the whole point of it: a face that disappears
-                          # mid-nod has not left the car.
+                          # merely trending down goes on counting as dropped.
+                          # Flicker length: this covers a face that blinks out
+                          # for a frame or two mid-nod.
+HEAD_SLUMP_HOLD = 15.0    # the same, for a drop that was already confirmed.
+                          # A head far enough down hides the eyes behind the
+                          # brow and the face stops being detectable at all,
+                          # so the detector has to hold a verdict it can no
+                          # longer re-measure. Fifteen seconds keeps the alarm
+                          # going through a real slump; after that the honest
+                          # answer is NO FACE, which is not a reassuring one.
 
 # Timeline strip
 TIMELINE_SECONDS = 60.0   # history the graph shows. Wider than the PERCLOS
@@ -377,6 +384,7 @@ class HeadTracker:
         self.ratio = None
         self.down_since = None
         self.last_down_seen = 0.0
+        self.confirmed_down = False
 
     # -- calibration -----------------------------------------------------
     def add_sample(self, shape):
@@ -406,20 +414,40 @@ class HeadTracker:
             if self.down_since is None:
                 self.down_since = now
             self.last_down_seen = now
+            # Confirmed once it has been held long enough to be a nod rather
+            # than a glance at the gearstick. Only a confirmed drop earns the
+            # long hold if the face then disappears.
+            if now - self.down_since >= HEAD_DROP_SECONDS:
+                self.confirmed_down = True
             return True
         self.down_since = None
+        self.confirmed_down = False
         return False
 
     def update_no_face(self, now):
         """Feed a frame with no face in it.
 
-        A head that was dropping a moment ago is still dropping -- that is
-        what took the face out of the frame in the first place.
+        Two different situations arrive here and they do not deserve the same
+        answer. A face lost while the head was already confirmed down has one
+        obvious explanation: the head kept going, and a camera cannot see past
+        a brow. A face lost from an upright head means something else -- the
+        driver turned away, got out, or covered the lens.
+
+        So a confirmed drop holds for HEAD_SLUMP_HOLD and a merely trending
+        one holds for the flicker-length grace. The grace alone was built for
+        a face that drops out for a frame and came nowhere near a driver who
+        is actually slumped: after a second and a half it cleared, the eye
+        timer had already been reset by the no-face branch, and a PERCLOS
+        score frozen at its last value read as ALERT. Green, on a slumped
+        driver, until the no-face alert eighteen seconds later.
         """
-        if (self.down_since is not None
-                and now - self.last_down_seen <= HEAD_DROP_GRACE):
+        if self.down_since is None:
+            return False
+        hold = HEAD_SLUMP_HOLD if self.confirmed_down else HEAD_DROP_GRACE
+        if now - self.last_down_seen <= hold:
             return True
         self.down_since = None
+        self.confirmed_down = False
         return False
 
     def down_for(self, now):
@@ -1374,6 +1402,14 @@ def main():
                 # a head that has been down for most of a second is not a
                 # statistical trend, it is happening now.
                 state, colour = "HEAD DOWN", (0, 0, 255)
+            elif rect is None:
+                # Every reading below this line is stale the moment the face
+                # goes: the eye timer is reset, and PERCLOS stops being fed
+                # but keeps returning its last value, which on a driver who
+                # was fine until a second ago is a low one. Falling through to
+                # those checks is what used to paint a vanished driver green.
+                # Amber, not red -- not monitoring is a warning, not an alarm.
+                state, colour = "NO FACE", (0, 165, 255)
             elif coverage < PERCLOS_MIN_COVERAGE:
                 state, colour = "WARMING UP", (0, 200, 255)
             elif score >= PERCLOS_ALERT:
@@ -1394,6 +1430,8 @@ def main():
             elif state in ("DROWSY", "FATIGUE WARNING"):
                 reason = "PERCLOS {:.1f}% of the last {:.0f}s".format(
                     score * 100, PERCLOS_WINDOW)
+            elif state == "NO FACE":
+                reason = "cannot see your face - not monitoring"
             elif state == "ALERT":
                 reason = "eyes open"
             else:
