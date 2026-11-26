@@ -21,8 +21,9 @@ DateTime parseInstant(String raw) {
 class DrowsyEvent {
   final int id;
   final DateTime time; // local time; the relay sends UTC
-  final double seconds; // how long the eyes stayed shut
-  final String kind; // DROWSY, MICROSLEEP or YAWN
+  /// What the duration measures depends on the kind -- see describeEvent.
+  final double seconds;
+  final String kind; // DROWSY, MICROSLEEP, HEAD DOWN or YAWN
 
   DrowsyEvent({
     required this.id,

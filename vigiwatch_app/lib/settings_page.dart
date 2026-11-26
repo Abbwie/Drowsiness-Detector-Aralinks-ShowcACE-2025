@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'privacy_page.dart';
 import 'settings_store.dart';
 import 'theme.dart';
 
@@ -114,7 +115,9 @@ class _SettingsPageState extends State<SettingsPage> {
         const Text('Emergency contact', style: TextStyle(fontSize: 16)),
         const SizedBox(height: 4),
         const Text(
-          'We send this person a message if you keep getting drowsy.',
+          'Kept on this phone. The detector messages the number it was set '
+          'up with on the laptop, so editing this does not yet change who '
+          'gets told.',
           style: TextStyle(fontSize: 13, color: muted),
         ),
         const SizedBox(height: 12),
@@ -157,6 +160,15 @@ class _SettingsPageState extends State<SettingsPage> {
               fontSize: 12, color: syncError == null ? muted : red),
         ),
         const SizedBox(height: 28),
+        const Text('About', style: TextStyle(fontSize: 16)),
+        const SizedBox(height: 12),
+        _LinkRow(
+          label: 'Your data and what Sentra cannot do',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const PrivacyPage()),
+          ),
+        ),
+        const SizedBox(height: 28),
         FilledButton(onPressed: save, child: const Text('Save')),
         const SizedBox(height: 10),
         OutlinedButton(
@@ -171,6 +183,36 @@ class _SettingsPageState extends State<SettingsPage> {
           child: const Text('Logout'),
         ),
       ],
+    );
+  }
+}
+
+class _LinkRow extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _LinkRow({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          color: card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: line),
+        ),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+            const Icon(Icons.chevron_right, size: 20, color: muted),
+          ],
+        ),
+      ),
     );
   }
 }

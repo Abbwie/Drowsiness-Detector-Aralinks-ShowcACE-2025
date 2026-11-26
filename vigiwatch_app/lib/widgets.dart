@@ -41,9 +41,31 @@ String formatDay(DateTime t) {
     'FATIGUE WARNING' => (label: 'Getting tired', colour: amber),
     'DROWSY' => (label: 'Drowsy', colour: red),
     'MICROSLEEP' => (label: 'Microsleep', colour: red),
+    'HEAD DOWN' => (label: 'Head down', colour: red),
     'CALIBRATING' => (label: 'Calibrating', colour: muted),
     'WARMING UP' => (label: 'Warming up', colour: muted),
     _ => (label: s.state, colour: muted),
+  };
+}
+
+/// Plain-language name for an episode, and what its number really measures.
+///
+/// The duration does not mean the same thing for every kind, and a bare
+/// "3.3s" under a drowsy episode invites the wrong reading: it is not three
+/// seconds of sleep, it is three seconds of closure spread through the last
+/// thirty. Spelling out which is which is the difference between a log of
+/// what the detector did and an account of why it did it.
+({String label, String detail, Color colour}) describeEvent(DrowsyEvent e) {
+  final secs = e.seconds.toStringAsFixed(1);
+  return switch (e.kind) {
+    'YAWN' => (label: 'Yawn', detail: '', colour: muted),
+    'MICROSLEEP' =>
+      (label: 'Microsleep', detail: 'eyes shut ${secs}s', colour: red),
+    'HEAD DOWN' =>
+      (label: 'Head down', detail: 'head down ${secs}s', colour: red),
+    'DROWSY' =>
+      (label: 'Drowsy', detail: '${secs}s shut in 30s', colour: red),
+    _ => (label: e.kind, detail: '${secs}s', colour: red),
   };
 }
 
@@ -168,8 +190,7 @@ class EventTile extends StatelessWidget {
         : formatTime(event.time);
 
     // A yawn has no meaningful duration -- the detector reports it as 0.
-    final detail =
-        event.kind == 'YAWN' ? 'Yawn' : '${event.seconds.toStringAsFixed(1)}s';
+    final described = describeEvent(event);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -185,17 +206,22 @@ class EventTile extends StatelessWidget {
             width: 8,
             height: 8,
             decoration: BoxDecoration(
-              color: event.kind == 'YAWN' ? muted : red,
+              color: described.colour,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 12),
           Expanded(child: Text(when, style: const TextStyle(fontSize: 14))),
-          if (event.kind == 'MICROSLEEP') ...[
-            const Text('microsleep', style: TextStyle(fontSize: 11, color: red)),
+          // Every kind is named now, not just microsleep. A row that shows a
+          // number without saying what was measured is not a record of
+          // anything a driver can check.
+          Text(described.label,
+              style: TextStyle(fontSize: 11, color: described.colour)),
+          if (described.detail.isNotEmpty) ...[
             const SizedBox(width: 8),
+            Text(described.detail,
+                style: const TextStyle(fontSize: 13, color: muted)),
           ],
-          Text(detail, style: const TextStyle(fontSize: 13, color: muted)),
         ],
       ),
     );

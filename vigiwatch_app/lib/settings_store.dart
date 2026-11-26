@@ -14,8 +14,10 @@ class SettingsStore {
   static const _kBuzzer = 'buzzer_on';
   static const _kDriver = 'driver_name';
 
-  String emergencyName = 'Mama';
-  String emergencyNumber = '+63 967 009 2434';
+  // Blank, not a real number. A default that dials a real person is one
+  // misread screen away from messaging a stranger, and this file is public.
+  String emergencyName = '';
+  String emergencyNumber = '';
   bool voiceAlertOn = true;
   bool buzzerOn = false;
 

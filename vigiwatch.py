@@ -20,9 +20,11 @@ except ImportError:
 try:
     import requests
 except ImportError:
-    requests = Nonew
+    requests = None
+
 
 try:
+
     import serial
     import serial.tools.list_ports
 except ImportError:
@@ -593,14 +595,21 @@ def draw_text(img, text, x, y, scale=0.6, colour=(235, 235, 235), thickness=1,
 
 def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
              ear, openness, mouth_opening, fps, arduino_ok=None,
-             head_ratio=None, head_baseline=None):
+             head_ratio=None, head_baseline=None, reason=""):
     """Status down the left edge, live numbers down the right edge."""
     h, w = img.shape[:2]
     left = HUD_MARGIN
     right = w - HUD_MARGIN
 
     # ---- left edge: what the system currently thinks ----
-    draw_text(img, state, left, 48, 1.0, colour, 2)
+    # On a panel, not just the outline. Video compression eats thin light text
+    # over a moving background, and this is the one word that has to survive.
+    (sw, sh), _ = cv2.getTextSize(state, FONT, 1.1, 3)
+    cv2.rectangle(img, (left - 10, 48 - sh - 12), (left + sw + 14, 48 + 13),
+                  (18, 18, 18), -1)
+    cv2.rectangle(img, (left - 10, 48 - sh - 12), (left - 5, 48 + 13),
+                  colour, -1)
+    draw_text(img, state, left, 48, 1.1, colour, 3)
 
     if calib.done:
         bar_y, bar_w, bar_h = 66, 250, 16
@@ -617,7 +626,12 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
             score * 100, coverage, PERCLOS_WINDOW), left, bar_y + bar_h + 22, 0.55)
     else:
         draw_text(img, "Keep your eyes open  {:.1f}/{:.0f}s".format(
-            calib_elapsed, CALIB_SECONDS), left, 78, 0.6, (0, 200, 255))
+            calib_elapsed, CALIB_SECONDS), left, 82, 0.6, (0, 200, 255))
+
+    # The sentence under the verdict. The HUD has always carried the numbers
+    # and never the reason, and the reason is the part a person reads.
+    if reason:
+        draw_text(img, reason, left, 132, 0.52, (215, 215, 215))
 
     # ---- right edge: the raw numbers, right-aligned ----
     rows = []
@@ -640,7 +654,7 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
         y += 28
 
     # s is only listed when there is a board to silence.
-    hints = "q quit    c recalibrate"
+    hints = "q quit    c recalibrate    m mesh"
     if arduino_ok is not None:
         hints += "    s silence buzzer"
     draw_text(img, hints, left, h - HUD_MARGIN, 0.5, (170, 170, 170))
@@ -717,6 +731,53 @@ def draw_timeline(img, perclos, score_history, now, x, y, width,
 
     draw_text(img, "eye closure  /  PERCLOS, last {:.0f}s".format(
         TIMELINE_SECONDS), x, gy + graph_h + 15, 0.44, (175, 175, 175))
+
+
+def draw_landmarks(img, shape, scale, off_x, off_y, head_down=False):
+    """
+    The face the detector is actually working from, drawn on the frame.
+
+    The eye and mouth outlines were already here; the rest of the mesh was
+    not, and anyone watching two green outlines has no way to tell perception
+    from a guess. The jaw, brows and nose cost nothing to draw and they are
+    what makes it obvious that a model is reading a face rather than a motion
+    detector tripping on a shadow.
+
+    The line down to the nose is the head-drop measurement itself -- the
+    quantity HEAD_DROP_RATIO is a fraction of. Worth drawing because it is the
+    part of this detector that is ours rather than dlib's.
+    """
+    def pt(i):
+        return (int(round(shape[i][0] * scale + off_x)),
+                int(round(shape[i][1] * scale + off_y)))
+
+    # The usual 68-point groups: jaw, both brows, the bridge, the nostrils.
+    for a, b in ((0, 17), (17, 22), (22, 27), (27, 31), (31, 36)):
+        pts = np.array([pt(i) for i in range(a, b)], dtype=np.int32)
+        cv2.polylines(img, [pts], False, (95, 175, 95), 1, cv2.LINE_AA)
+
+    # The head-drop geometry: the eye line, and the drop from it to the nose.
+    left = shape[36:42].mean(axis=0)
+    right = shape[42:48].mean(axis=0)
+    lp = (int(round(left[0] * scale + off_x)), int(round(left[1] * scale + off_y)))
+    rp = (int(round(right[0] * scale + off_x)), int(round(right[1] * scale + off_y)))
+    mid = ((lp[0] + rp[0]) // 2, (lp[1] + rp[1]) // 2)
+    nose = pt(30)
+    col = (0, 0, 255) if head_down else (165, 165, 165)
+    cv2.line(img, lp, rp, col, 1, cv2.LINE_AA)
+    cv2.line(img, mid, nose, col, 1, cv2.LINE_AA)
+    cv2.circle(img, nose, 3, col, -1, cv2.LINE_AA)
+
+
+def draw_alert_frame(img, colour):
+    """A border in the alert colour.
+
+    The state word changes and the buzzer sounds, but a recording loses the
+    buzzer and a viewer reading the road, not the HUD, can miss the word. A
+    border is the one thing that cannot be missed on a screen or on film.
+    """
+    h, w = img.shape[:2]
+    cv2.rectangle(img, (0, 0), (w - 1, h - 1), colour, 14)
 
 
 def write_session_summary(source, started, ended, episodes, peak_score,
@@ -1192,6 +1253,11 @@ def main():
     longest_closure = 0.0
     episodes = {}
 
+    # Filming wants both: the mesh on, to show the model reading the face,
+    # and off, for a clean shot of the driver. Cheaper as a key than as two
+    # takes.
+    show_mesh = True
+
     cv2.namedWindow("Sentra", cv2.WINDOW_NORMAL)
     print("\n  Sentra - Keeps You in Sight\n")
     print("Look at the camera with your eyes open normally.")
@@ -1234,6 +1300,7 @@ def main():
             openness = 1.0
             head_down = False
             contours = []
+            landmarks = None
 
             if rect is not None:
                 no_face_start = None
@@ -1248,6 +1315,7 @@ def main():
                 # outlines stay sharp instead of being upscaled with the image.
                 contours = [cv2.convexHull(left_eye), cv2.convexHull(right_eye),
                             shape[48:60]]
+                landmarks = shape
 
                 if not calib.done:
                     # Coasted frames sit this one out. Calibration is a
@@ -1314,6 +1382,22 @@ def main():
                 state, colour = "FATIGUE WARNING", (0, 165, 255)
             else:
                 state, colour = "ALERT", (0, 255, 0)
+
+            # One line saying why, in the words a person would use.
+            if state == "MICROSLEEP":
+                reason = "eyes shut {:.1f}s".format(eyes_shut_for)
+            elif state == "HEAD DOWN":
+                reason = "head down {:.1f}s".format(head_down_for)
+                if head.baseline and head.ratio:
+                    reason += "   {:.0f}% of upright".format(
+                        100.0 * head.ratio / head.baseline)
+            elif state in ("DROWSY", "FATIGUE WARNING"):
+                reason = "PERCLOS {:.1f}% of the last {:.0f}s".format(
+                    score * 100, PERCLOS_WINDOW)
+            elif state == "ALERT":
+                reason = "eyes open"
+            else:
+                reason = ""
 
             # ---------- hardware ----------
             drowsy_now = state in ("DROWSY", "MICROSLEEP", "HEAD DOWN")
@@ -1393,11 +1477,16 @@ def main():
                                   + (off_x, off_y)).astype(np.int32)
                 cv2.drawContours(display, [scaled], -1, (0, 255, 0), 1, cv2.LINE_AA)
 
+            # Under the HUD and the eye outlines, so neither is drawn over.
+            if show_mesh and landmarks is not None:
+                draw_landmarks(display, landmarks, disp_scale, off_x, off_y,
+                               head_down)
+
             draw_hud(display, state, colour, score, coverage, calib,
                      calib.elapsed(now), ear, openness, mouth_opening, fps,
                      arduino_connected() if arduino_enabled else None,
                      head.ratio if (head_drop_enabled and rect is not None)
-                     else None, head.baseline)
+                     else None, head.baseline, reason)
 
             if calib.done:
                 draw_timeline(display, perclos, score_history, now,
@@ -1410,6 +1499,10 @@ def main():
             if args.video:
                 draw_text(display, "RECORDED CLIP", DISPLAY_W // 2, 40, 0.55,
                           (120, 200, 255), 1, align="center")
+
+            # Last, so the border sits over everything else.
+            if drowsy_now:
+                draw_alert_frame(display, colour)
 
             cv2.imshow("Sentra", display)
             # A clip is paced to its own frame rate so it plays at life speed.
@@ -1430,6 +1523,8 @@ def main():
                 stop_buzzer()
                 buzzer_muted = True
                 print("Buzzer muted until you read alert again")
+            if key == ord("m"):
+                show_mesh = not show_mesh
             if key == ord("c"):
                 print("Recalibrating - look at the camera with your eyes open.")
                 calib.reset()
