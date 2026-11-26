@@ -134,16 +134,9 @@ HEAD_DROP_RATIO = 0.80    # fraction of the calibrated upright nose-to-eye-line
 HEAD_DROP_SECONDS = 0.8   # held this long before it counts. A glance at the
                           # dashboard or down at the gearstick is shorter.
 HEAD_DROP_GRACE = 1.5     # once the face is lost, how long a head that was
-                          # merely trending down goes on counting as dropped.
-                          # Flicker length: this covers a face that blinks out
-                          # for a frame or two mid-nod.
-HEAD_SLUMP_HOLD = 15.0    # the same, for a drop that was already confirmed.
-                          # A head far enough down hides the eyes behind the
-                          # brow and the face stops being detectable at all,
-                          # so the detector has to hold a verdict it can no
-                          # longer re-measure. Fifteen seconds keeps the alarm
-                          # going through a real slump; after that the honest
-                          # answer is NO FACE, which is not a reassuring one.
+                          # already dropping goes on counting as dropped. This
+                          # is the whole point of it: a face that disappears
+                          # mid-nod has not left the car.
 
 # Timeline strip
 TIMELINE_SECONDS = 60.0   # history the graph shows. Wider than the PERCLOS
@@ -384,7 +377,6 @@ class HeadTracker:
         self.ratio = None
         self.down_since = None
         self.last_down_seen = 0.0
-        self.confirmed_down = False
 
     # -- calibration -----------------------------------------------------
     def add_sample(self, shape):
@@ -414,40 +406,20 @@ class HeadTracker:
             if self.down_since is None:
                 self.down_since = now
             self.last_down_seen = now
-            # Confirmed once it has been held long enough to be a nod rather
-            # than a glance at the gearstick. Only a confirmed drop earns the
-            # long hold if the face then disappears.
-            if now - self.down_since >= HEAD_DROP_SECONDS:
-                self.confirmed_down = True
             return True
         self.down_since = None
-        self.confirmed_down = False
         return False
 
     def update_no_face(self, now):
         """Feed a frame with no face in it.
 
-        Two different situations arrive here and they do not deserve the same
-        answer. A face lost while the head was already confirmed down has one
-        obvious explanation: the head kept going, and a camera cannot see past
-        a brow. A face lost from an upright head means something else -- the
-        driver turned away, got out, or covered the lens.
-
-        So a confirmed drop holds for HEAD_SLUMP_HOLD and a merely trending
-        one holds for the flicker-length grace. The grace alone was built for
-        a face that drops out for a frame and came nowhere near a driver who
-        is actually slumped: after a second and a half it cleared, the eye
-        timer had already been reset by the no-face branch, and a PERCLOS
-        score frozen at its last value read as ALERT. Green, on a slumped
-        driver, until the no-face alert eighteen seconds later.
+        A head that was dropping a moment ago is still dropping -- that is
+        what took the face out of the frame in the first place.
         """
-        if self.down_since is None:
-            return False
-        hold = HEAD_SLUMP_HOLD if self.confirmed_down else HEAD_DROP_GRACE
-        if now - self.last_down_seen <= hold:
+        if (self.down_since is not None
+                and now - self.last_down_seen <= HEAD_DROP_GRACE):
             return True
         self.down_since = None
-        self.confirmed_down = False
         return False
 
     def down_for(self, now):
@@ -623,21 +595,14 @@ def draw_text(img, text, x, y, scale=0.6, colour=(235, 235, 235), thickness=1,
 
 def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
              ear, openness, mouth_opening, fps, arduino_ok=None,
-             head_ratio=None, head_baseline=None, reason=""):
+             head_ratio=None, head_baseline=None):
     """Status down the left edge, live numbers down the right edge."""
     h, w = img.shape[:2]
     left = HUD_MARGIN
     right = w - HUD_MARGIN
 
     # ---- left edge: what the system currently thinks ----
-    # On a panel, not just the outline. Video compression eats thin light text
-    # over a moving background, and this is the one word that has to survive.
-    (sw, sh), _ = cv2.getTextSize(state, FONT, 1.1, 3)
-    cv2.rectangle(img, (left - 10, 48 - sh - 12), (left + sw + 14, 48 + 13),
-                  (18, 18, 18), -1)
-    cv2.rectangle(img, (left - 10, 48 - sh - 12), (left - 5, 48 + 13),
-                  colour, -1)
-    draw_text(img, state, left, 48, 1.1, colour, 3)
+    draw_text(img, state, left, 48, 1.0, colour, 2)
 
     if calib.done:
         bar_y, bar_w, bar_h = 66, 250, 16
@@ -654,12 +619,7 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
             score * 100, coverage, PERCLOS_WINDOW), left, bar_y + bar_h + 22, 0.55)
     else:
         draw_text(img, "Keep your eyes open  {:.1f}/{:.0f}s".format(
-            calib_elapsed, CALIB_SECONDS), left, 82, 0.6, (0, 200, 255))
-
-    # The sentence under the verdict. The HUD has always carried the numbers
-    # and never the reason, and the reason is the part a person reads.
-    if reason:
-        draw_text(img, reason, left, 132, 0.52, (215, 215, 215))
+            calib_elapsed, CALIB_SECONDS), left, 78, 0.6, (0, 200, 255))
 
     # ---- right edge: the raw numbers, right-aligned ----
     rows = []
@@ -682,7 +642,7 @@ def draw_hud(img, state, colour, score, coverage, calib, calib_elapsed,
         y += 28
 
     # s is only listed when there is a board to silence.
-    hints = "q quit    c recalibrate    m mesh"
+    hints = "q quit    c recalibrate"
     if arduino_ok is not None:
         hints += "    s silence buzzer"
     draw_text(img, hints, left, h - HUD_MARGIN, 0.5, (170, 170, 170))
@@ -759,53 +719,6 @@ def draw_timeline(img, perclos, score_history, now, x, y, width,
 
     draw_text(img, "eye closure  /  PERCLOS, last {:.0f}s".format(
         TIMELINE_SECONDS), x, gy + graph_h + 15, 0.44, (175, 175, 175))
-
-
-def draw_landmarks(img, shape, scale, off_x, off_y, head_down=False):
-    """
-    The face the detector is actually working from, drawn on the frame.
-
-    The eye and mouth outlines were already here; the rest of the mesh was
-    not, and anyone watching two green outlines has no way to tell perception
-    from a guess. The jaw, brows and nose cost nothing to draw and they are
-    what makes it obvious that a model is reading a face rather than a motion
-    detector tripping on a shadow.
-
-    The line down to the nose is the head-drop measurement itself -- the
-    quantity HEAD_DROP_RATIO is a fraction of. Worth drawing because it is the
-    part of this detector that is ours rather than dlib's.
-    """
-    def pt(i):
-        return (int(round(shape[i][0] * scale + off_x)),
-                int(round(shape[i][1] * scale + off_y)))
-
-    # The usual 68-point groups: jaw, both brows, the bridge, the nostrils.
-    for a, b in ((0, 17), (17, 22), (22, 27), (27, 31), (31, 36)):
-        pts = np.array([pt(i) for i in range(a, b)], dtype=np.int32)
-        cv2.polylines(img, [pts], False, (95, 175, 95), 1, cv2.LINE_AA)
-
-    # The head-drop geometry: the eye line, and the drop from it to the nose.
-    left = shape[36:42].mean(axis=0)
-    right = shape[42:48].mean(axis=0)
-    lp = (int(round(left[0] * scale + off_x)), int(round(left[1] * scale + off_y)))
-    rp = (int(round(right[0] * scale + off_x)), int(round(right[1] * scale + off_y)))
-    mid = ((lp[0] + rp[0]) // 2, (lp[1] + rp[1]) // 2)
-    nose = pt(30)
-    col = (0, 0, 255) if head_down else (165, 165, 165)
-    cv2.line(img, lp, rp, col, 1, cv2.LINE_AA)
-    cv2.line(img, mid, nose, col, 1, cv2.LINE_AA)
-    cv2.circle(img, nose, 3, col, -1, cv2.LINE_AA)
-
-
-def draw_alert_frame(img, colour):
-    """A border in the alert colour.
-
-    The state word changes and the buzzer sounds, but a recording loses the
-    buzzer and a viewer reading the road, not the HUD, can miss the word. A
-    border is the one thing that cannot be missed on a screen or on film.
-    """
-    h, w = img.shape[:2]
-    cv2.rectangle(img, (0, 0), (w - 1, h - 1), colour, 14)
 
 
 def write_session_summary(source, started, ended, episodes, peak_score,
@@ -1281,11 +1194,6 @@ def main():
     longest_closure = 0.0
     episodes = {}
 
-    # Filming wants both: the mesh on, to show the model reading the face,
-    # and off, for a clean shot of the driver. Cheaper as a key than as two
-    # takes.
-    show_mesh = True
-
     cv2.namedWindow("Sentra", cv2.WINDOW_NORMAL)
     print("\n  Sentra - Keeps You in Sight\n")
     print("Look at the camera with your eyes open normally.")
@@ -1328,7 +1236,6 @@ def main():
             openness = 1.0
             head_down = False
             contours = []
-            landmarks = None
 
             if rect is not None:
                 no_face_start = None
@@ -1343,7 +1250,6 @@ def main():
                 # outlines stay sharp instead of being upscaled with the image.
                 contours = [cv2.convexHull(left_eye), cv2.convexHull(right_eye),
                             shape[48:60]]
-                landmarks = shape
 
                 if not calib.done:
                     # Coasted frames sit this one out. Calibration is a
@@ -1402,14 +1308,6 @@ def main():
                 # a head that has been down for most of a second is not a
                 # statistical trend, it is happening now.
                 state, colour = "HEAD DOWN", (0, 0, 255)
-            elif rect is None:
-                # Every reading below this line is stale the moment the face
-                # goes: the eye timer is reset, and PERCLOS stops being fed
-                # but keeps returning its last value, which on a driver who
-                # was fine until a second ago is a low one. Falling through to
-                # those checks is what used to paint a vanished driver green.
-                # Amber, not red -- not monitoring is a warning, not an alarm.
-                state, colour = "NO FACE", (0, 165, 255)
             elif coverage < PERCLOS_MIN_COVERAGE:
                 state, colour = "WARMING UP", (0, 200, 255)
             elif score >= PERCLOS_ALERT:
@@ -1418,24 +1316,6 @@ def main():
                 state, colour = "FATIGUE WARNING", (0, 165, 255)
             else:
                 state, colour = "ALERT", (0, 255, 0)
-
-            # One line saying why, in the words a person would use.
-            if state == "MICROSLEEP":
-                reason = "eyes shut {:.1f}s".format(eyes_shut_for)
-            elif state == "HEAD DOWN":
-                reason = "head down {:.1f}s".format(head_down_for)
-                if head.baseline and head.ratio:
-                    reason += "   {:.0f}% of upright".format(
-                        100.0 * head.ratio / head.baseline)
-            elif state in ("DROWSY", "FATIGUE WARNING"):
-                reason = "PERCLOS {:.1f}% of the last {:.0f}s".format(
-                    score * 100, PERCLOS_WINDOW)
-            elif state == "NO FACE":
-                reason = "cannot see your face - not monitoring"
-            elif state == "ALERT":
-                reason = "eyes open"
-            else:
-                reason = ""
 
             # ---------- hardware ----------
             drowsy_now = state in ("DROWSY", "MICROSLEEP", "HEAD DOWN")
@@ -1515,16 +1395,11 @@ def main():
                                   + (off_x, off_y)).astype(np.int32)
                 cv2.drawContours(display, [scaled], -1, (0, 255, 0), 1, cv2.LINE_AA)
 
-            # Under the HUD and the eye outlines, so neither is drawn over.
-            if show_mesh and landmarks is not None:
-                draw_landmarks(display, landmarks, disp_scale, off_x, off_y,
-                               head_down)
-
             draw_hud(display, state, colour, score, coverage, calib,
                      calib.elapsed(now), ear, openness, mouth_opening, fps,
                      arduino_connected() if arduino_enabled else None,
                      head.ratio if (head_drop_enabled and rect is not None)
-                     else None, head.baseline, reason)
+                     else None, head.baseline)
 
             if calib.done:
                 draw_timeline(display, perclos, score_history, now,
@@ -1537,10 +1412,6 @@ def main():
             if args.video:
                 draw_text(display, "RECORDED CLIP", DISPLAY_W // 2, 40, 0.55,
                           (120, 200, 255), 1, align="center")
-
-            # Last, so the border sits over everything else.
-            if drowsy_now:
-                draw_alert_frame(display, colour)
 
             cv2.imshow("Sentra", display)
             # A clip is paced to its own frame rate so it plays at life speed.
@@ -1561,8 +1432,6 @@ def main():
                 stop_buzzer()
                 buzzer_muted = True
                 print("Buzzer muted until you read alert again")
-            if key == ord("m"):
-                show_mesh = not show_mesh
             if key == ord("c"):
                 print("Recalibrating - look at the camera with your eyes open.")
                 calib.reset()
