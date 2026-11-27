@@ -81,27 +81,32 @@ class Logo extends StatelessWidget {
 
   const Logo({super.key, this.size = 40, this.withMotto = false});
 
+  /// The lockup is about 1.2x as wide as it is tall and carries the wordmark
+  /// itself, so `size` scales the whole thing rather than sizing a square
+  /// mark that sits beside separate text. The multiplier keeps "Sentra"
+  /// reading at roughly the weight it did before, so neither call site had
+  /// to be retuned.
+  static const double _lockupScale = 2.6;
+
   @override
   Widget build(BuildContext context) {
-    final mark = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: red,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(Icons.warning_amber_rounded,
-              color: Colors.white, size: size * 0.6),
+    final mark = Image.asset(
+      'assets/sentra_logo.png',
+      height: size * _lockupScale,
+      fit: BoxFit.contain,
+      // The artwork is ink-on-transparent for a dark background. If it ever
+      // fails to load, a red box on a dark screen is a clearer "something is
+      // missing" than the blank space an unhandled error leaves.
+      errorBuilder: (context, error, stackTrace) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: red,
+          borderRadius: BorderRadius.circular(8),
         ),
-        SizedBox(width: size * 0.3),
-        Text(
-          'Sentra',
-          style: TextStyle(fontSize: size * 0.55, fontWeight: FontWeight.bold),
-        ),
-      ],
+        child: Icon(Icons.warning_amber_rounded,
+            color: Colors.white, size: size * 0.6),
+      ),
     );
 
     if (!withMotto) return mark;
@@ -114,7 +119,9 @@ class Logo extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         mark,
-        SizedBox(height: size * 0.24),
+        // Tighter than it was: the lockup brings its own breathing room
+        // underneath the wordmark, so the old gap left the motto adrift.
+        SizedBox(height: size * 0.08),
         Text(
           motto,
           textAlign: TextAlign.center,

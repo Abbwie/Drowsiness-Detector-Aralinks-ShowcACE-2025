@@ -1,6 +1,7 @@
 Sentra session summary
   source            webcam 0
   monitored         0.5 min
-  peak PERCLOS      0.0%
-  longest closure   0.00 s
-  no alerts raised
+  peak PERCLOS      2.9%
+  longest closure   0.03 s
+  head down         1
+  events/hour       120.5
